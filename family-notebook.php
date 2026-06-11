@@ -125,10 +125,18 @@ function fn_register_api_endpoints() {
     ]);
 
     // PUT: Update a single note
+    // PUT / DELETE: Update or Trash a Folder/Note
     register_rest_route( 'family-notebook/v1', '/notes/(?P<id>\d+)', [
-        'methods'  => 'PUT',
-        'callback' => 'fn_api_update_note',
-        'permission_callback' => 'is_user_logged_in'
+        [
+            'methods'  => 'PUT',
+            'callback' => 'fn_api_update_note',
+            'permission_callback' => 'is_user_logged_in'
+        ],
+        [
+            'methods'  => 'DELETE',
+            'callback' => 'fn_api_delete_note',
+            'permission_callback' => 'is_user_logged_in'
+        ]
     ]);
 	// GET: Export Folder as JSON Template
     register_rest_route( 'family-notebook/v1', '/export/(?P<id>\d+)', [
@@ -426,6 +434,33 @@ function fn_api_import_template( $request ) {
         'folder_id' => $folder_id,
         'new_items' => $created_items
     ]);
+}
+// Callback: Delete Folder or Note (Bypassing Trash)
+function fn_api_delete_note( $request ) {
+    $note_id = intval( $request['id'] );
+    $post = get_post( $note_id );
+
+    if ( ! $post || $post->post_type !== 'fn_note_page' ) {
+        return new WP_Error( 'not_found', 'Item not found', ['status' => 404] );
+    }
+
+    // Forcefully obliterate children first
+    if ( $post->post_parent == 0 ) {
+        $children = get_posts([
+            'post_type'   => 'fn_note_page',
+            'post_parent' => $note_id,
+            'numberposts' => -1,
+            'post_status' => 'any'
+        ]);
+        foreach ( $children as $child ) {
+            wp_delete_post( $child->ID, true ); // The 'true' forces permanent deletion
+        }
+    }
+
+    // Forcefully obliterate the parent
+    wp_delete_post( $note_id, true );
+
+    return rest_ensure_response([ 'deleted' => true, 'id' => $note_id ]);
 }
 
 /**

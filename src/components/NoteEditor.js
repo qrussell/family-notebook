@@ -2,7 +2,7 @@ import { useState, useEffect } from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
 import { RichTextBlock, ChecklistBlock, ChoreChartBlock } from './Blocks';
 
-const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, onNoteCreated }) => {
+const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, onNoteCreated, onNoteUpdated }) => {
     const [title, setTitle] = useState('');
     const [blocks, setBlocks] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -33,7 +33,9 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
             data: { title: title, content: blocks }
         }).then(() => {
             setIsSaving(false);
-            setIsEditMode(false); // Exit edit mode after saving template
+            setIsEditMode(false); 
+            // NEW: Tell the parent component the title has been updated!
+            if (onNoteUpdated) onNoteUpdated(noteId, title); 
         }).catch(console.error);
     };
 

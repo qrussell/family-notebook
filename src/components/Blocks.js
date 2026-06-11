@@ -16,7 +16,17 @@ export const ChecklistBlock = ({ block, updateBlock, isEditMode }) => {
     }, [items, nextFocusIndex]);
 
     const handleAddItem = (currentIndex) => {
-        const newItem = { id: Date.now(), text: '', category: '', completed: false };
+        // Find the category of the previous item to inherit
+        let inheritedCategory = '';
+        if (currentIndex !== undefined && items[currentIndex]) {
+            inheritedCategory = items[currentIndex].category || '';
+        } else if (items.length > 0) {
+            // If clicking the "+ Add Item" button at the bottom, inherit from the very last item
+            inheritedCategory = items[items.length - 1].category || '';
+        }
+
+        // Apply the inherited category to the new item
+        const newItem = { id: Date.now(), text: '', category: inheritedCategory, completed: false };
         const newItems = [...items];
 
         if (currentIndex !== undefined) {
@@ -71,8 +81,18 @@ export const ChecklistBlock = ({ block, updateBlock, isEditMode }) => {
     });
 
     return (
-        <div style={{ border: '1px solid #e2e8f0', borderRadius: '4px', padding: '15px', backgroundColor: '#f8fafc' }}>
-            <h4 style={{ margin: '0 0 15px 0', color: '#64748b', fontSize: '12px', textTransform: 'uppercase' }}>Checklist</h4>
+        // NEW: Added textAlign: 'left' to the main wrapper
+        <div style={{ border: '1px solid #e2e8f0', borderRadius: '4px', padding: '15px', backgroundColor: '#f8fafc', textAlign: 'left' }}>
+            
+            <style>{`
+                .responsive-center { text-align: left; }
+                @media (min-width: 768px) {
+                    .responsive-center { text-align: center; }
+                }
+            `}</style>
+            
+            {/* UPDATED: Added className to the Block Title */}
+            <h4 className="responsive-center" style={{ margin: '0 0 15px 0', color: '#64748b', fontSize: '12px', textTransform: 'uppercase' }}>Checklist</h4>
             
             {isEditMode ? (
                 // FLAT LIST FOR EDITING
@@ -103,22 +123,22 @@ export const ChecklistBlock = ({ block, updateBlock, isEditMode }) => {
                 // GROUPED LIST FOR INTERACTIVE MODE
                 sortedCats.map(cat => (
                     <div key={`cat-${cat}`} style={{ marginBottom: '15px' }}>
-						{cat ? (
-							<div style={{ 
-								textAlign: 'center', 
-								fontSize: '12px', 
-								fontWeight: 'bold', 
-								color: '#334155', 
-								backgroundColor: '#e2e8f0', 
-								padding: '6px', 
-								borderRadius: '4px', 
-								marginBottom: '10px' 
-							}}>
-								{cat}
-							</div>
-						) : (
-							<div style={{ borderBottom: '1px solid #e2e8f0', marginBottom: '8px' }}></div>
-						)}
+                        {cat ? (
+                            <div className="responsive-center" style={{ 
+                                fontSize: '12px', 
+                                fontWeight: 'bold', 
+                                color: '#334155', 
+                                backgroundColor: '#e2e8f0', 
+                                padding: '6px', 
+                                borderRadius: '4px', 
+                                marginBottom: '10px' 
+                            }}>
+                                {cat}
+                            </div>
+                        ) : (
+                            <div style={{ borderBottom: '1px solid #e2e8f0', marginBottom: '8px' }}></div>
+                        )}
+                        {/* The items below remain perfectly left-aligned */}
                         {groupedItems[cat].map(item => (
                             <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', opacity: item.completed ? 0.6 : 1 }}>
                                 <input 
@@ -127,7 +147,8 @@ export const ChecklistBlock = ({ block, updateBlock, isEditMode }) => {
                                     onChange={() => handleToggleItem(item.id, item.completed)}
                                     style={{ transform: 'scale(1.2)', cursor: 'pointer', flexShrink: 0 }}
                                 />
-                                <span style={{ flex: 1, fontSize: '16px', textDecoration: item.completed ? 'line-through' : 'none', color: '#334155' }}>
+                                {/* NEW: Explicitly force the span to align left */}
+                                <span style={{ flex: 1, textAlign: 'left', fontSize: '16px', textDecoration: item.completed ? 'line-through' : 'none', color: '#334155' }}>
                                     {item.text || "Empty item"}
                                 </span>
                             </div>
@@ -154,7 +175,18 @@ export const ChoreChartBlock = ({ block, updateBlock, isEditMode }) => {
     const daysOfWeek = ['M', 'T', 'W', 'Th', 'F', 'S', 'Su'];
 
     const handleAddRow = () => {
-        updateBlock(block.id, { rows: [...rows, { id: Date.now(), task: '', category: '', value: 0, days: Array(7).fill(false) }] });
+        // Inherit category from the last row in the chart, if one exists
+        const inheritedCategory = rows.length > 0 ? (rows[rows.length - 1].category || '') : '';
+
+        updateBlock(block.id, { 
+            rows: [...rows, { 
+                id: Date.now(), 
+                task: '', 
+                category: inheritedCategory, // Apply the inherited category
+                value: 0, 
+                days: Array(7).fill(false) 
+            }] 
+        });
     };
 
     const handleUpdateRow = (rowId, field, newValue) => {
@@ -191,7 +223,7 @@ export const ChoreChartBlock = ({ block, updateBlock, isEditMode }) => {
     });
 
     return (
-        <div style={{ border: '1px solid #e2e8f0', borderRadius: '4px', overflow: 'hidden', backgroundColor: 'white' }}>
+        <div style={{ border: '1px solid #e2e8f0', borderRadius: '4px', overflow: 'hidden', backgroundColor: 'white', textAlign: 'left' }}>
             <div style={{ backgroundColor: '#f8fafc', padding: '10px 15px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h4 style={{ margin: 0, color: '#64748b', fontSize: '12px', textTransform: 'uppercase' }}>Chore Chart</h4>
                 <strong style={{ color: '#0284c7', fontSize: '14px' }}>Total: ${grandTotal.toFixed(2)}</strong>
@@ -236,23 +268,21 @@ export const ChoreChartBlock = ({ block, updateBlock, isEditMode }) => {
                         ) : (
                             // GROUPED LIST FOR INTERACTIVE MODE
                             sortedCats.map(cat => {
-                                // Inside the ChoreChartBlock's interactive (else) block, inside the sortedCats.map:
-								const catHeader = cat ? (
-									<tr key={`cat-${cat}`}>
-										<td colSpan="10" style={{ 
-											padding: '10px', 
-											textAlign: 'center', 
-											backgroundColor: '#e2e8f0', 
-											color: '#334155', 
-											fontSize: '12px', 
-											fontWeight: 'bold', 
-											textTransform: 'uppercase' 
-										}}>
-											{cat}
-										</td>
-									</tr>
-								) : null;
-
+                                const catHeader = cat ? (
+                                    <tr key={`cat-${cat}`}>
+                                        {/* UPDATED: Added className and removed inline textAlign */}
+                                        <td colSpan="10" className="responsive-center" style={{ 
+                                            padding: '10px', 
+                                            backgroundColor: '#e2e8f0', 
+                                            color: '#334155', 
+                                            fontSize: '12px', 
+                                            fontWeight: 'bold', 
+                                            textTransform: 'uppercase' 
+                                        }}>
+                                            {cat}
+                                        </td>
+                                    </tr>
+                                ) : null;
                                 const itemRows = groupedRows[cat].map(row => (
                                     <tr key={row.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                         <td style={{ padding: '8px 10px', fontWeight: '500', color: '#1e293b' }}>
@@ -288,13 +318,20 @@ export const ChoreChartBlock = ({ block, updateBlock, isEditMode }) => {
     );
 };
 
-export const RichTextBlock = ({ block, updateBlock }) => {
-    return (
+// -----------------------------
+// 3. RICH TEXT BLOCK
+// -----------------------------
+export const RichTextBlock = ({ block, updateBlock, isEditMode }) => {
+    return isEditMode ? (
         <textarea 
             value={block.content || ''}
             onChange={(e) => updateBlock(block.id, { content: e.target.value })}
             placeholder="Type your notes here..."
             style={{ width: '100%', minHeight: '100px', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '10px', fontSize: '16px', resize: 'vertical', outline: 'none', fontFamily: 'inherit' }}
         />
+    ) : (
+        <div style={{ whiteSpace: 'pre-wrap', color: '#334155', fontSize: '16px', lineHeight: '1.6' }}>
+            {block.content || "Empty text block"}
+        </div>
     );
 };

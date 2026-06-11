@@ -83,6 +83,54 @@ const WorkspaceView = ({ workspace, onBack }) => {
             }
         }).catch(console.error);
     };
+	// 1. Delete a Folder
+    const handleDeleteFolder = () => {
+        if (!selectedFolder) return;
+        if (!window.confirm(`Are you sure you want to delete the folder "${selectedFolder.title}" and ALL notes inside it?`)) return;
+
+        apiFetch({ path: `/family-notebook/v1/notes/${selectedFolder.id}`, method: 'DELETE' })
+            .then(() => {
+                // Forcing Number() casting guarantees the filter works
+                setItems(items.filter(item => Number(item.id) !== Number(selectedFolder.id) && Number(item.parent_id) !== Number(selectedFolder.id)));
+                setSelectedFolder(null);
+            })
+            .catch((err) => {
+                console.error("Delete failed:", err);
+                alert("Server rejected deletion. Check the console.");
+            });
+    };
+
+    // 2. Rename a Folder
+    const handleRenameFolder = () => {
+        if (!selectedFolder) return;
+        const newTitle = window.prompt("Enter new folder name:", selectedFolder.title);
+        if (!newTitle || newTitle.trim() === '' || newTitle === selectedFolder.title) return;
+
+        apiFetch({
+            path: `/family-notebook/v1/notes/${selectedFolder.id}`,
+            method: 'PUT',
+            data: { title: newTitle, content: [] } // Content is empty because it's just a folder
+        }).then(() => {
+            setItems(items.map(item => item.id === selectedFolder.id ? { ...item, title: newTitle } : item));
+            setSelectedFolder({ ...selectedFolder, title: newTitle });
+        }).catch(console.error);
+    };
+
+    // 3. Delete a Note
+    const handleDeleteNote = (e, noteId, noteTitle) => {
+        e.stopPropagation(); 
+        if (!window.confirm(`Delete the note "${noteTitle}"?`)) return;
+
+        apiFetch({ path: `/family-notebook/v1/notes/${noteId}`, method: 'DELETE' })
+            .then(() => {
+                // Forcing Number() casting guarantees the filter works
+                setItems(items.filter(item => Number(item.id) !== Number(noteId)));
+            })
+            .catch((err) => {
+                console.error("Delete failed:", err);
+                alert("Server rejected deletion. Check the console.");
+            });
+    };
 	// Handle Exporting a Folder as a JSON File
     const handleExportFolder = () => {
         if (!selectedFolder) return;
@@ -177,7 +225,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
     // Dynamic Sidebar Styling (Transforms into a slide-out drawer on mobile)
     const sidebarStyle = isMobile ? {
         position: 'fixed', top: 0, left: 0, height: '100vh', width: '280px',
-        backgroundColor: '#f1f5f9', padding: '20px', zIndex: 100,
+        backgroundColor: '#f1f5f9', padding: '20px', zIndex: 1000, /* INCREASED FROM 100 */
         boxShadow: '4px 0 15px rgba(0,0,0,0.2)',
         transform: showMobileSidebar ? 'translateX(0)' : 'translateX(-100%)',
         transition: 'transform 0.3s ease-in-out',
@@ -259,9 +307,19 @@ const WorkspaceView = ({ workspace, onBack }) => {
                     </div>
 
                     {isCreatingFolder && (
-                        <form onSubmit={(e) => handleCreateItem(e, true)} style={{ display: 'flex', marginBottom: '10px' }}>
-                            <input type="text" value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="Folder name..." autoFocus style={{ flex: 1, padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px 0 0 4px', fontSize: '16px' }} />
-                            <button type="submit" style={{ backgroundColor: workspace.color, color: 'white', border: 'none', padding: '8px 12px', borderRadius: '0 4px 4px 0', cursor: 'pointer' }}>&rarr;</button>
+                        <form onSubmit={(e) => handleCreateItem(e, true)} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
+                            <input 
+                                type="text" 
+                                value={newFolderName} 
+                                onChange={(e) => setNewFolderName(e.target.value)} 
+                                placeholder="Folder name..." 
+                                autoFocus 
+                                style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' }} 
+                            />
+                            <div style={{ display: 'flex', gap: '5px' }}>
+                                <button type="submit" style={{ flex: 1, backgroundColor: workspace.color, color: 'white', border: 'none', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>Save</button>
+                                <button type="button" onClick={() => setIsCreatingFolder(false)} style={{ flex: 1, backgroundColor: 'transparent', border: '1px solid #cbd5e1', color: '#64748b', padding: '8px', borderRadius: '4px', cursor: 'pointer' }}>Cancel</button>
+                            </div>
                         </form>
                     )}
 
@@ -299,6 +357,10 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                 setItems([...items, newNote]);
                                 setActiveNoteId(newNote.id);
                             }}
+                            // NEW: Instantly update the title in the UI state
+                            onNoteUpdated={(id, newTitle) => {
+                                setItems(items.map(item => item.id === id ? { ...item, title: newTitle } : item));
+                            }}
                         />
                     ) : (
                         !selectedFolder ? (
@@ -309,7 +371,13 @@ const WorkspaceView = ({ workspace, onBack }) => {
                         ) : (
                             <div>
                                 <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', borderBottom: '2px solid #f1f5f9', paddingBottom: '15px', marginBottom: '20px', gap: '10px' }}>
-                                    <h3 style={{ margin: 0, fontSize: '24px', color: '#1e293b' }}>{selectedFolder.title}</h3>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                                        <h3 style={{ margin: 0, fontSize: '24px', color: '#1e293b' }}>{selectedFolder.title}</h3>
+                                        <div style={{ display: 'flex', gap: '5px' }}>
+                                            <button onClick={handleRenameFolder} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#94a3b8' }} title="Rename Folder">✏️</button>
+                                            <button onClick={handleDeleteFolder} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#ef4444' }} title="Delete Folder">🗑️</button>
+                                        </div>
+                                    </div>
                                     
                                     <div style={{ display: 'flex', gap: '10px', width: isMobile ? '100%' : 'auto', flexDirection: isMobile ? 'column' : 'row' }}>
                                         <button onClick={handleExportFolder} style={{ backgroundColor: 'white', color: '#64748b', border: '1px solid #cbd5e1', padding: '10px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', width: isMobile ? '100%' : 'auto' }}>
@@ -345,7 +413,15 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                                     <h4 style={{ margin: '0 0 5px 0', color: '#0f172a', fontSize: '18px' }}>{note.title}</h4>
                                                     <span style={{ fontSize: '12px', color: '#94a3b8' }}>Tap to view</span>
                                                 </div>
-                                                <span style={{ color: workspace.color, fontWeight: 'bold', fontSize: '20px' }}>&rarr;</span>
+                                                
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                                                    <button 
+                                                        onClick={(e) => handleDeleteNote(e, note.id, note.title)} 
+                                                        style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '5px 8px', cursor: 'pointer', color: '#ef4444' }}
+                                                        title="Delete Note"
+                                                    >🗑️</button>
+                                                    <span style={{ color: workspace.color, fontWeight: 'bold', fontSize: '20px' }}>&rarr;</span>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
