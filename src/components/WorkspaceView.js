@@ -21,6 +21,7 @@ const getContrastTextColor = (hexColor) => {
 };
 
 const WorkspaceView = ({ workspace, onBack }) => {
+	console.log("Workspace Data received:", workspace);
     const [items, setItems] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     
@@ -31,15 +32,27 @@ const WorkspaceView = ({ workspace, onBack }) => {
     const [isCreatingNote, setIsCreatingNote] = useState(false);
     const [newNoteTitle, setNewNoteTitle] = useState('');
     
-    // Editor State
+	// Template Library State
+    const [templates, setTemplates] = useState([]);
+    const [selectedTemplateId, setSelectedTemplateId] = useState('');
+    
+	// Editor State
     const [activeNoteId, setActiveNoteId] = useState(null);
 
 	// Mobile Responsiveness State
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
     const [showMobileSidebar, setShowMobileSidebar] = useState(false);
+	
 	// Import State
     const fileInputRef = useRef(null);
     const [isImporting, setIsImporting] = useState(false);
+	
+	// User Management State
+    const [isManagingUsers, setIsManagingUsers] = useState(false);
+    const [workspaceUsers, setWorkspaceUsers] = useState([]);
+    const [inviteEmail, setInviteEmail] = useState('');
+    const [isInviting, setIsInviting] = useState(false);
+	
 	useEffect(() => {
         const handleResize = () => setIsMobile(window.innerWidth < 768);
         window.addEventListener('resize', handleResize);
@@ -47,8 +60,15 @@ const WorkspaceView = ({ workspace, onBack }) => {
     }, []);
     // Calculate the best text color for the current workspace header
     const headerTextColor = getContrastTextColor(workspace.color);
-
-    useEffect(() => {
+    
+	useEffect(() => {
+        // Fetch Templates from the Library
+        apiFetch({ path: '/family-notebook/v1/templates' })
+            .then(data => setTemplates(data))
+            .catch(err => console.error("Failed to load templates", err));
+    }, []);
+    
+	useEffect(() => {
         setIsLoading(true);
         apiFetch({ path: `/family-notebook/v1/notes?workspace_id=${workspace.id}` })
             .then((data) => {
@@ -58,6 +78,51 @@ const WorkspaceView = ({ workspace, onBack }) => {
             .catch(console.error);
     }, [workspace.id]);
 
+	// Fetch users when the modal opens
+    useEffect(() => {
+        if (isManagingUsers) {
+            apiFetch({ path: `/family-notebook/v1/workspaces/${workspace.id}/users` })
+                .then(setWorkspaceUsers)
+                .catch(err => console.error("Failed to load users", err));
+        }
+    }, [isManagingUsers, workspace.id]);
+
+    const handleInviteUser = (e) => {
+        e.preventDefault();
+        if (!inviteEmail.trim()) return;
+        setIsInviting(true);
+
+        apiFetch({
+            path: `/family-notebook/v1/workspaces/${workspace.id}/users`,
+            method: 'POST',
+            data: { email: inviteEmail }
+        }).then(() => {
+            // Refresh the user list
+            return apiFetch({ path: `/family-notebook/v1/workspaces/${workspace.id}/users` });
+        }).then((updatedUsers) => {
+            setWorkspaceUsers(updatedUsers);
+            setInviteEmail('');
+            setIsInviting(false);
+            alert("User added successfully!");
+        }).catch((err) => {
+            setIsInviting(false);
+            alert(err.message || "Failed to add user. Are you sure they have a WordPress account?");
+        });
+    };
+
+    const handleRemoveUser = (userId, userName) => {
+        if (!window.confirm(`Remove ${userName} from this workspace?`)) return;
+
+        apiFetch({
+            path: `/family-notebook/v1/workspaces/${workspace.id}/users/${userId}`,
+            method: 'DELETE'
+        }).then(() => {
+            setWorkspaceUsers(workspaceUsers.filter(u => u.id !== userId));
+        }).catch((err) => {
+            alert(err.message || "Failed to remove user.");
+        });
+    };
+	
     // Handle Creating Both Folders AND Notes
     const handleCreateItem = (e, isFolder) => {
         e.preventDefault();
@@ -70,7 +135,8 @@ const WorkspaceView = ({ workspace, onBack }) => {
             data: { 
                 title: title, 
                 workspace_id: workspace.id,
-                parent_id: isFolder ? 0 : selectedFolder.id // 0 for folders, folder ID for notes
+                parent_id: isFolder ? 0 : selectedFolder.id,
+                template_id: !isFolder ? selectedTemplateId : '' // NEW: Pass the template ID
             }
         }).then((newItem) => {
             setItems([...items, newItem]);
@@ -79,7 +145,9 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 setIsCreatingFolder(false);
             } else {
                 setNewNoteTitle('');
+                setSelectedTemplateId(''); // Reset selection
                 setIsCreatingNote(false);
+                setActiveNoteId(newItem.id); // Instantly open the newly created note!
             }
         }).catch(console.error);
     };
@@ -244,9 +312,51 @@ const WorkspaceView = ({ workspace, onBack }) => {
                     style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 99 }} 
                 />
             )}
+            {/* MANAGE ACCESS MODAL */}
+            {isManagingUsers && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
+                    <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '8px', width: '100%', maxWidth: '500px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                            <h2 style={{ margin: 0, color: '#1e293b' }}>Workspace Access</h2>
+                            <button onClick={() => setIsManagingUsers(false)} style={{ background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: '#94a3b8' }}>&times;</button>
+                        </div>
 
+                        {/* Invite Form */}
+                        <form onSubmit={handleInviteUser} style={{ display: 'flex', gap: '10px', marginBottom: '30px' }}>
+                            <input 
+                                type="email" 
+                                placeholder="Enter user's WordPress email..." 
+                                value={inviteEmail}
+                                onChange={(e) => setInviteEmail(e.target.value)}
+                                style={{ flex: 1, padding: '10px', border: '1px solid #cbd5e1', borderRadius: '4px', outline: 'none' }}
+                                required
+                            />
+                            <button disabled={isInviting} style={{ backgroundColor: workspace.color, color: 'white', border: 'none', padding: '10px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                                {isInviting ? 'Sending...' : 'Invite'}
+                            </button>
+                        </form>
+
+                        {/* Current Users List */}
+                        <h4 style={{ margin: '0 0 15px 0', color: '#64748b', textTransform: 'uppercase', fontSize: '12px' }}>Current Members</h4>
+                        <ul style={{ listStyle: 'none', padding: 0, margin: 0, maxHeight: '300px', overflowY: 'auto' }}>
+                            {workspaceUsers.map(user => (
+                                <li key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f1f5f9' }}>
+                                    <div>
+                                        <div style={{ fontWeight: 'bold', color: '#334155' }}>{user.name} {user.is_owner && <span style={{ fontSize: '11px', backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '10px', marginLeft: '8px' }}>Owner</span>}</div>
+                                        <div style={{ fontSize: '12px', color: '#64748b' }}>{user.email}</div>
+                                    </div>
+                                    {!user.is_owner && (
+                                        <button onClick={() => handleRemoveUser(user.id, user.name)} style={{ background: 'transparent', border: '1px solid #ef4444', color: '#ef4444', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Remove</button>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+            )}
             {/* HEADER */}
-            <div style={headerStyle}>
+            {/* UPDATED: Added className="fn-hide-print" */}
+            <div style={headerStyle} className="fn-hide-print">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                     {/* HAMBURGER MENU (Only shows on Mobile) */}
                     {isMobile && (
@@ -266,12 +376,29 @@ const WorkspaceView = ({ workspace, onBack }) => {
                     &larr; {isMobile ? 'Back' : 'Switch Workspace'}
                 </button>
             </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+				{/* NEW: Manage Users Button */}
+				<button 
+					style={{ backgroundColor: 'white', color: workspace.color, border: 'none', padding: isMobile ? '6px 10px' : '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMobile ? '12px' : '14px' }} 
+					onClick={() => setIsManagingUsers(true)}
+				>
+					⚙️ Manage Access
+				</button>
 
+				{/* Existing Back Button */}
+				<button 
+					style={{ backgroundColor: headerTextColor === '#ffffff' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)', color: headerTextColor, border: 'none', padding: isMobile ? '6px 10px' : '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMobile ? '12px' : '14px' }} 
+					onClick={onBack}
+				>
+					&larr; {isMobile ? 'Back' : 'Switch Workspace'}
+				</button>
+			</div>
             <div style={{ display: 'flex', gap: '20px', minHeight: '500px' }}>
                 
                 {/* SIDEBAR: FOLDERS */}
                 {/* We apply our new dynamic 'sidebarStyle' here */}
-                <div style={sidebarStyle}>
+                {/* UPDATED: Added className="fn-hide-print" */}
+                <div style={sidebarStyle} className="fn-hide-print">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                         <h3 style={{ fontSize: '14px', color: '#64748b', textTransform: 'uppercase', margin: 0 }}>Folders</h3>
                         {/* Close button for mobile inside the drawer */}
@@ -357,9 +484,12 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                 setItems([...items, newNote]);
                                 setActiveNoteId(newNote.id);
                             }}
-                            // NEW: Instantly update the title in the UI state
                             onNoteUpdated={(id, newTitle) => {
                                 setItems(items.map(item => item.id === id ? { ...item, title: newTitle } : item));
+                            }}
+                            // NEW: Catch the new template and add it to the dropdown state
+                            onTemplateSaved={(newTemplate) => {
+                                setTemplates([...templates, newTemplate]);
                             }}
                         />
                     ) : (
@@ -390,10 +520,27 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                 </div>
 					
                                 {isCreatingNote && (
-                                    <form onSubmit={(e) => handleCreateItem(e, false)} style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '10px', marginBottom: '20px', backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px' }}>
-                                        <input type="text" value={newNoteTitle} onChange={(e) => setNewNoteTitle(e.target.value)} placeholder="Note Title..." autoFocus style={{ flex: 1, padding: '12px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '16px' }} />
-                                        <div style={{ display: 'flex', gap: '10px' }}>
-                                            <button type="submit" style={{ backgroundColor: '#0284c7', color: 'white', border: 'none', padding: '12px 20px', borderRadius: '4px', cursor: 'pointer', flex: 1 }}>Create</button>
+                                    <form onSubmit={(e) => handleCreateItem(e, false)} style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '20px', backgroundColor: '#f8fafc', padding: '20px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                        <h4 style={{ margin: 0, color: '#334155' }}>Create a New Note</h4>
+                                        
+                                        <input type="text" value={newNoteTitle} onChange={(e) => setNewNoteTitle(e.target.value)} placeholder="Note Title (e.g. Costco Trip)" autoFocus style={{ width: '100%', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '16px', boxSizing: 'border-box' }} />
+                                        
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', marginBottom: '5px' }}>Start From Template</label>
+                                            <select 
+                                                value={selectedTemplateId} 
+                                                onChange={(e) => setSelectedTemplateId(e.target.value)}
+                                                style={{ width: '100%', padding: '12px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '16px', backgroundColor: 'white' }}
+                                            >
+                                                <option value="">Blank Note</option>
+                                                {templates.map(tpl => (
+                                                    <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                                            <button type="submit" style={{ backgroundColor: workspace.color, color: 'white', border: 'none', padding: '12px 20px', borderRadius: '4px', cursor: 'pointer', flex: 1, fontWeight: 'bold' }}>Create Note</button>
                                             <button type="button" onClick={() => setIsCreatingNote(false)} style={{ backgroundColor: 'transparent', color: '#64748b', border: '1px solid #cbd5e1', padding: '12px 20px', borderRadius: '4px', cursor: 'pointer', flex: 1 }}>Cancel</button>
                                         </div>
                                     </form>
