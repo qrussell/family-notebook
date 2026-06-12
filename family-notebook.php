@@ -180,10 +180,42 @@ function fn_api_get_templates() {
     return rest_ensure_response(array_map(fn($p) => ['id' => $p->ID, 'title' => $p->post_title, 'content' => json_decode($p->post_content, true)], $posts));
 }
 
-function fn_api_save_template($request) {
-    $p = $request->get_json_params();
-    $id = wp_insert_post(['post_title' => sanitize_text_field($p['title']), 'post_content' => wp_json_encode($p['content']), 'post_type' => 'fn_template', 'post_status' => 'publish']);
-    return rest_ensure_response(['id' => $id]);
+function fn_api_save_template( $request ) {
+    $params = $request->get_json_params();
+    $clean_content = $params['content'];
+
+    // Helper function to deep-clean blocks
+    $clean_blocks = function(&$blocks) {
+        foreach ($blocks as &$block) {
+            if (isset($block['items'])) {
+                foreach ($block['items'] as &$item) $item['completed'] = false;
+            }
+            if (isset($block['rows'])) {
+                foreach ($block['rows'] as &$row) $row['days'] = array_fill(0, 7, false);
+            }
+        }
+    };
+
+    // Check if it's the new Tabbed structure or a legacy block array
+    if ( isset($clean_content['tabs']) && is_array($clean_content['tabs']) ) {
+        foreach ( $clean_content['tabs'] as &$tab ) {
+            if ( isset($tab['blocks']) && is_array($tab['blocks']) ) {
+                $clean_blocks($tab['blocks']);
+            }
+        }
+    } else if ( is_array($clean_content) ) {
+        // Legacy Note Array fallback
+        $clean_blocks($clean_content); 
+    }
+
+    $id = wp_insert_post([
+        'post_title'   => sanitize_text_field( $params['title'] ),
+        'post_content' => wp_json_encode( $clean_content ),
+        'post_type'    => 'fn_template',
+        'post_status'  => 'publish'
+    ]);
+    
+    return rest_ensure_response([ 'id' => $id, 'message' => 'Template saved.' ]);
 }
 
 function fn_api_delete_template($request) { wp_delete_post(intval($request['id']), true); return rest_ensure_response(['deleted' => true]); }

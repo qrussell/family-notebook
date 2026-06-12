@@ -3,8 +3,15 @@ import { useRef, useEffect, useState } from '@wordpress/element';
 // -----------------------------
 // 1. CHECKLIST BLOCK
 // -----------------------------
-export const ChecklistBlock = ({ block, updateBlock, isEditMode, availableCategories = [] }) => {
+export const ChecklistBlock = ({ block, updateBlock, isEditMode }) => {
+    // 1. State to track which item's category dropdown is open
+    const [focusedCatId, setFocusedCatId] = useState(null);
     const items = block.items || [];
+
+    // 2. Get categories ONLY from this specific block
+    const blockCategories = [...new Set(
+        items.map(i => i.category).filter(cat => cat && cat.trim() !== '')
+    )].sort();
     const inputRefs = useRef([]);
     const [nextFocusIndex, setNextFocusIndex] = useState(null);
 
@@ -80,37 +87,67 @@ export const ChecklistBlock = ({ block, updateBlock, isEditMode, availableCatego
             <style>{`.responsive-center { text-align: left; } @media (min-width: 768px) { .responsive-center { text-align: center; } }`}</style>
             
             <h4 className="responsive-center" style={{ margin: '0 0 15px 0', color: '#64748b', fontSize: '12px', textTransform: 'uppercase' }}>Checklist</h4>
-            
-            {/* NEW: Datalist for autocomplete categories */}
-            {isEditMode && (
-                <datalist id={`cats-${block.id}`}>
-                    {availableCategories.map(cat => <option key={cat} value={cat} />)}
-                </datalist>
-            )}
-            
+                        
             {isEditMode ? (
                 items.map((item, index) => (
-                    <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                        <input type="checkbox" disabled style={{ transform: 'scale(1.2)', flexShrink: 0, opacity: 0.5 }} />
-                        <div style={{ display: 'flex', flex: 1, gap: '10px' }}>
+                    <div key={item.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '15px', paddingBottom: '12px', borderBottom: '1px dashed #e2e8f0' }}>
+                        
+                        <input type="checkbox" disabled style={{ transform: 'scale(1.2)', flexShrink: 0, opacity: 0.5, marginTop: '8px' }} />
+                        
+                        {/* THE FIX: Vertical column stack, Task on top, Category underneath */}
+                        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '6px' }}>
                             <input 
                                 type="text" 
-                                list={`cats-${block.id}`} // Links to datalist
-                                placeholder="Category (e.g. Kitchen)"
-                                value={item.category || ''} 
-                                onChange={(e) => handleUpdateField(item.id, 'category', e.target.value)}
-                                style={{ width: '130px', fontSize: '12px', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '6px 8px', outline: 'none' }}
-                            />
-                            <input 
-                                type="text" 
-                                ref={el => inputRefs.current[index] = el}
+                                ref={el => inputRefs.current && (inputRefs.current[index] = el)}
                                 value={item.text} 
                                 onChange={(e) => handleUpdateField(item.id, 'text', e.target.value)}
                                 onKeyDown={(e) => handleKeyDown(e, index)}
                                 placeholder="Task description..."
-                                style={{ flex: 1, border: 'none', borderBottom: '1px dashed #cbd5e1', background: 'transparent', outline: 'none', fontSize: '16px' }}
+                                style={{ width: '100%', border: 'none', borderBottom: '1px dashed #cbd5e1', background: 'transparent', outline: 'none', fontSize: '16px', padding: '4px 0', color: '#0f172a' }}
                             />
-                        </div>
+                            
+                            {/* CUSTOM DROPDOWN CONTAINER */}
+                            <div style={{ position: 'relative', width: '100%', maxWidth: '180px' }}>
+                                <input 
+                                    type="text" 
+                                    placeholder="+ Add Category (optional)"
+                                    value={item.category || ''} 
+                                    onChange={(e) => handleUpdateField(item.id, 'category', e.target.value)}
+                                    onFocus={() => setFocusedCatId(item.id)}
+                                    // The 150ms timeout is crucial so the dropdown click registers before it closes!
+                                    onBlur={() => setTimeout(() => setFocusedCatId(null), 150)}
+                                    style={{ width: '100%', fontSize: '12px', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '4px 8px', outline: 'none', backgroundColor: '#f1f5f9', color: '#64748b', boxSizing: 'border-box' }}
+                                />
+
+                                {/* THE FLOATING MENU */}
+                                {focusedCatId === item.id && blockCategories.length > 0 && (
+                                    <div style={{ position: 'absolute', top: '100%', left: 0, width: '100%', backgroundColor: 'white', border: '1px solid #cbd5e1', borderRadius: '4px', marginTop: '4px', zIndex: 100, boxShadow: '0 4px 10px rgba(0,0,0,0.1)', maxHeight: '150px', overflowY: 'auto' }}>
+                                        {blockCategories
+                                            // Live filter: only show categories matching what they are typing
+                                            .filter(cat => cat.toLowerCase().includes((item.category || '').toLowerCase()))
+                                            .map(cat => (
+                                                <div 
+                                                    key={cat} 
+                                                    onClick={() => {
+                                                        handleUpdateField(item.id, 'category', cat);
+                                                        setFocusedCatId(null);
+                                                    }}
+                                                    style={{ padding: '8px 12px', fontSize: '12px', color: '#334155', cursor: 'pointer', borderBottom: '1px solid #f1f5f9', backgroundColor: 'white' }}
+                                                >
+                                                    {cat}
+                                                </div>
+                                            ))}
+                                        
+                                        {/* Show a helper message if they type a totally new category */}
+                                        {blockCategories.filter(cat => cat.toLowerCase().includes((item.category || '').toLowerCase())).length === 0 && (
+                                            <div style={{ padding: '8px 12px', fontSize: '12px', color: '#94a3b8', fontStyle: 'italic' }}>
+                                                New category...
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+						</div>
                     </div>
                 ))
             ) : (
@@ -146,188 +183,204 @@ export const ChecklistBlock = ({ block, updateBlock, isEditMode, availableCatego
 // -----------------------------
 // 2. CHORE CHART BLOCK
 // -----------------------------
-export const ChoreChartBlock = ({ block, updateBlock, isEditMode, availableCategories = [] }) => {
+
+export const ChoreChartBlock = ({ block, updateBlock, isEditMode }) => {
+    const [focusedCatId, setFocusedCatId] = useState(null);
+    const inputRefs = useRef({}); 
+    
     const rows = block.rows || [];
-    const daysOfWeek = ['M', 'T', 'W', 'Th', 'F', 'S', 'Su'];
+    const daysOfWeek = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
-    // NEW: Focus tracking for Chore Chart
-    const inputRefs = useRef([]);
-    const [nextFocusIndex, setNextFocusIndex] = useState(null);
+    const blockCategories = [...new Set(
+        rows.map(r => r.category).filter(cat => cat && cat.trim() !== '')
+    )].sort();
 
-    useEffect(() => {
-        if (nextFocusIndex !== null && inputRefs.current[nextFocusIndex]) {
-            inputRefs.current[nextFocusIndex].focus();
-            setNextFocusIndex(null);
-        }
-    }, [rows, nextFocusIndex]);
-
-    const handleAddRow = (currentIndex) => {
-        let inheritedCategory = '';
-        if (currentIndex !== undefined && rows[currentIndex]) {
-            inheritedCategory = rows[currentIndex].category || '';
-        } else if (rows.length > 0) {
-            inheritedCategory = rows[rows.length - 1].category || '';
-        }
-
-        const newRow = { id: Date.now(), task: '', category: inheritedCategory, value: 0, days: Array(7).fill(false) };
-        const newRows = [...rows];
-
-        if (currentIndex !== undefined) {
-            newRows.splice(currentIndex + 1, 0, newRow);
-            setNextFocusIndex(currentIndex + 1);
-        } else {
-            newRows.push(newRow);
-            setNextFocusIndex(newRows.length - 1);
-        }
-
-        updateBlock(block.id, { rows: newRows });
+    // --- DATA MANAGEMENT ---
+    const handleAddRow = (inheritedCategory = '') => {
+        const newRowId = `row_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        const newRow = { id: newRowId, text: '', category: inheritedCategory, days: Array(7).fill(false) };
+        updateBlock(block.id, { rows: [...rows, newRow] });
+        return newRowId; 
     };
 
-    const handleUpdateRow = (rowId, field, newValue) => {
-        updateBlock(block.id, { rows: rows.map(r => r.id === rowId ? { ...r, [field]: newValue } : r) });
+    const handleUpdateRow = (rowId, field, value) => {
+        updateBlock(block.id, {
+            rows: rows.map(r => r.id === rowId ? { ...r, [field]: value } : r)
+        });
+    };
+
+    const handleDeleteRow = (rowId) => {
+        updateBlock(block.id, { rows: rows.filter(r => r.id !== rowId) });
     };
 
     const handleToggleDay = (rowId, dayIndex) => {
-        const updatedRows = rows.map(row => {
-            if (row.id === rowId) {
-                const newDays = [...row.days];
-                newDays[dayIndex] = !newDays[dayIndex];
-                return { ...row, days: newDays };
-            }
-            return row;
+        updateBlock(block.id, {
+            rows: rows.map(r => {
+                if (r.id === rowId) {
+                    const newDays = [...r.days];
+                    newDays[dayIndex] = !newDays[dayIndex];
+                    return { ...r, days: newDays };
+                }
+                return r;
+            })
         });
-        updateBlock(block.id, { rows: updatedRows }, true);
     };
 
-    // NEW: KeyDown handler for Chore Chart
-    const handleKeyDown = (e, index) => {
-        if (!isEditMode) return;
+    const handleKeyDown = (e, rowId, currentCategory) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            handleAddRow(index);
-        } else if (e.key === 'Backspace' && rows[index].task === '' && rows[index].category === '') {
-            e.preventDefault();
-            if (rows.length > 1) {
-                const newRows = rows.filter((_, i) => i !== index);
-                updateBlock(block.id, { rows: newRows });
-                setNextFocusIndex(index > 0 ? index - 1 : 0);
-            }
+            const newRowId = handleAddRow(currentCategory);
+            setTimeout(() => {
+                if (inputRefs.current[newRowId]) {
+                    inputRefs.current[newRowId].focus();
+                }
+            }, 50);
         }
     };
 
-    const calculateRowTotal = (row) => row.days.filter(Boolean).length * (parseFloat(row.value) || 0);
-    const grandTotal = rows.reduce((sum, row) => sum + calculateRowTotal(row), 0);
-
+    // --- GROUPING LOGIC (For View Mode Only) ---
     const groupedRows = rows.reduce((acc, row) => {
-        const cat = (row.category || '').trim();
+        const cat = row.category || '';
         if (!acc[cat]) acc[cat] = [];
         acc[cat].push(row);
         return acc;
     }, {});
 
     const sortedCats = Object.keys(groupedRows).sort((a, b) => {
-        if (a === '') return 1;
+        if (a === '') return 1; 
         if (b === '') return -1;
         return a.localeCompare(b);
     });
 
     return (
-        <div style={{ border: '1px solid #e2e8f0', borderRadius: '4px', overflow: 'hidden', backgroundColor: 'white', textAlign: 'left' }}>
-            <div style={{ backgroundColor: '#f8fafc', padding: '10px 15px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h4 style={{ margin: 0, color: '#64748b', fontSize: '12px', textTransform: 'uppercase' }}>Chore Chart</h4>
-                <strong style={{ color: '#0284c7', fontSize: '14px' }}>Total: ${grandTotal.toFixed(2)}</strong>
-            </div>
+        <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '15px', backgroundColor: '#f8fafc' }}>
+            <h4 style={{ margin: '0 0 20px 0', color: '#64748b', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '1px', textAlign: 'left' }}>
+                Chore Chart
+            </h4>
 
-            {/* NEW: Datalist for autocomplete categories */}
-            {isEditMode && (
-                <datalist id={`cats-${block.id}`}>
-                    {availableCategories.map(cat => <option key={cat} value={cat} />)}
-                </datalist>
-            )}
-            
-            <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '700px' }}>
-                    <thead>
-                        <tr style={{ backgroundColor: '#f1f5f9', color: '#475569', fontSize: '12px' }}>
-                            <th style={{ padding: '10px', borderBottom: '1px solid #e2e8f0' }}>Task Name</th>
-                            <th style={{ padding: '10px', borderBottom: '1px solid #e2e8f0', width: '80px' }}>Value</th>
-                            {daysOfWeek.map(day => <th key={day} style={{ padding: '10px', borderBottom: '1px solid #e2e8f0', textAlign: 'center', width: '40px' }}>{day}</th>)}
-                            <th style={{ padding: '10px', borderBottom: '1px solid #e2e8f0', textAlign: 'right', width: '80px' }}>Total</th>
-                            {isEditMode && <th style={{ padding: '10px', borderBottom: '1px solid #e2e8f0', width: '40px' }}></th>}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {isEditMode ? (
-                            rows.map((row, index) => (
-                                <tr key={row.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                            <input 
-                                                type="text" 
-                                                ref={el => inputRefs.current[index] = el}
-                                                placeholder="Task..." 
-                                                value={row.task} 
-                                                onChange={(e) => handleUpdateRow(row.id, 'task', e.target.value)} 
-                                                onKeyDown={(e) => handleKeyDown(e, index)}
-                                                style={{ width: '100%', border: '1px solid #cbd5e1', padding: '6px', borderRadius: '4px', boxSizing: 'border-box' }} 
-                                            />
-                                            <input 
-                                                type="text" 
-                                                list={`cats-${block.id}`}
-                                                placeholder="Category (e.g. Yard)" 
-                                                value={row.category || ''} 
-                                                onChange={(e) => handleUpdateRow(row.id, 'category', e.target.value)} 
-                                                style={{ width: '100%', border: '1px solid #cbd5e1', padding: '4px 6px', borderRadius: '4px', fontSize: '12px', backgroundColor: '#f8fafc', boxSizing: 'border-box' }} 
-                                            />
+            {isEditMode ? (
+                /* --- EDIT MODE: FLAT LIST --- 
+                   This prevents the input from unmounting when the category changes! */
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    {rows.map(row => (
+                        <div key={row.id} style={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '15px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                                    <input 
+                                        type="text" 
+                                        ref={el => inputRefs.current[row.id] = el}
+                                        value={row.text} 
+                                        onChange={(e) => handleUpdateRow(row.id, 'text', e.target.value)}
+                                        onKeyDown={(e) => handleKeyDown(e, row.id, row.category)}
+                                        placeholder="Task description..."
+                                        autoComplete="off"
+                                        style={{ flex: 1, border: 'none', borderBottom: '1px dashed #cbd5e1', background: 'transparent', outline: 'none', fontSize: '16px', padding: '4px 0', color: '#0f172a', fontWeight: 'bold' }}
+                                    />
+                                    <button onClick={() => handleDeleteRow(row.id)} style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '18px', cursor: 'pointer', padding: '0 5px' }}>&times;</button>
+                                </div>
+                                
+                                <div style={{ position: 'relative', width: '100%', maxWidth: '200px' }}>
+                                    <input 
+                                        type="text" 
+                                        value={row.category || ''} 
+                                        onChange={(e) => handleUpdateRow(row.id, 'category', e.target.value)}
+                                        onFocus={() => setFocusedCatId(row.id)}
+                                        onBlur={() => setTimeout(() => setFocusedCatId(null), 150)}
+                                        placeholder="+ Add Category"
+                                        autoComplete="off"
+                                        spellCheck="false"
+                                        style={{ width: '100%', fontSize: '13px', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '6px 10px', outline: 'none', backgroundColor: '#f1f5f9', color: '#64748b', boxSizing: 'border-box' }}
+                                    />
+                                    
+                                    {focusedCatId === row.id && blockCategories.length > 0 && (
+                                        <div style={{ position: 'absolute', top: '100%', left: 0, width: '100%', backgroundColor: 'white', border: '1px solid #cbd5e1', borderRadius: '4px', marginTop: '4px', zIndex: 100, boxShadow: '0 4px 10px rgba(0,0,0,0.1)', maxHeight: '150px', overflowY: 'auto' }}>
+                                            {blockCategories
+                                                .filter(c => c.toLowerCase().includes((row.category || '').toLowerCase()))
+                                                .map(c => (
+                                                    <div 
+                                                        key={c} 
+                                                        onMouseDown={(e) => e.preventDefault()} 
+                                                        onClick={() => {
+                                                            handleUpdateRow(row.id, 'category', c);
+                                                            setFocusedCatId(null);
+                                                        }}
+                                                        style={{ padding: '8px 12px', fontSize: '12px', color: '#334155', cursor: 'pointer', borderBottom: '1px solid #f1f5f9', backgroundColor: 'white' }}
+                                                    >
+                                                        {c}
+                                                    </div>
+                                                ))}
                                         </div>
-                                    </td>
-                                    <td style={{ padding: '8px 10px' }}>
-                                        <input type="number" value={row.value} onChange={(e) => handleUpdateRow(row.id, 'value', e.target.value)} step="0.25" style={{ width: '100%', border: '1px solid #cbd5e1', padding: '6px', textAlign: 'right', borderRadius: '4px', boxSizing: 'border-box' }} />
-                                    </td>
-                                    {row.days.map((_, i) => (
-                                        <td key={i} style={{ padding: '8px 10px', textAlign: 'center' }}>
-                                            <input type="checkbox" disabled style={{ transform: 'scale(1.2)', opacity: 0.5 }} />
-                                        </td>
-                                    ))}
-                                    <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>$0.00</td>
-                                    <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                                        <button onClick={() => updateBlock(block.id, { rows: rows.filter(r => r.id !== row.id) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '18px' }}>&times;</button>
-                                    </td>
-                                </tr>
-                            ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                /* --- VIEW MODE: GROUPED BY CATEGORY --- */
+                sortedCats.map(cat => (
+                    <div key={`cat-${cat}`} style={{ marginBottom: '25px' }}>
+                        {cat ? (
+                            <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#334155', backgroundColor: '#e2e8f0', padding: '6px 12px', borderRadius: '4px', marginBottom: '15px', display: 'inline-block' }}>
+                                {cat}
+                            </div>
                         ) : (
-                            // ... Grouped Interactive Mode (Keep exactly the same) ...
-                            sortedCats.map(cat => {
-                                const catHeader = cat ? (
-                                    <tr key={`cat-${cat}`}>
-                                        <td colSpan="10" className="responsive-center" style={{ padding: '10px', backgroundColor: '#e2e8f0', color: '#334155', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' }}>
-                                            {cat}
-                                        </td>
-                                    </tr>
-                                ) : null;
-                                const itemRows = groupedRows[cat].map(row => (
-                                    <tr key={row.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                        <td style={{ padding: '8px 10px', fontWeight: '500', color: '#1e293b' }}>{row.task || "—"}</td>
-                                        <td style={{ padding: '8px 10px', textAlign: 'right', color: '#64748b' }}>${parseFloat(row.value || 0).toFixed(2)}</td>
-                                        {row.days.map((isChecked, i) => (
-                                            <td key={i} style={{ padding: '8px 10px', textAlign: 'center' }}>
-                                                <input type="checkbox" checked={isChecked} onChange={() => handleToggleDay(row.id, i)} style={{ transform: 'scale(1.2)', cursor: 'pointer' }} />
-                                            </td>
-                                        ))}
-                                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 'bold' }}>${calculateRowTotal(row).toFixed(2)}</td>
-                                    </tr>
-                                ));
-                                return catHeader ? [catHeader, ...itemRows] : itemRows;
-                            })
+                            rows.length > 0 && groupedRows['']?.length > 0 && sortedCats.length > 1 && <div style={{ borderBottom: '2px solid #e2e8f0', marginBottom: '15px' }}></div>
                         )}
-                    </tbody>
-                </table>
-            </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                            {groupedRows[cat].map(row => (
+                                <div key={row.id} style={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '15px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                        <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#334155', textAlign: 'left' }}>
+                                            {row.text || "Untitled Task"}
+                                        </div>
+                                        
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                                            {daysOfWeek.map((day, idx) => {
+                                                const isChecked = row.days[idx];
+                                                return (
+                                                    <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                                                        <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 'bold' }}>{day}</span>
+                                                        <div 
+                                                            onClick={() => handleToggleDay(row.id, idx)}
+                                                            style={{ 
+                                                                width: '32px', 
+                                                                height: '32px', 
+                                                                borderRadius: '50%',
+                                                                backgroundColor: isChecked ? '#10b981' : '#f8fafc',
+                                                                border: isChecked ? 'none' : '2px solid #e2e8f0',
+                                                                display: 'flex', 
+                                                                justifyContent: 'center', 
+                                                                alignItems: 'center',
+                                                                cursor: 'pointer',
+                                                                color: 'white',
+                                                                fontSize: '14px',
+                                                                fontWeight: 'bold',
+                                                                transition: 'all 0.2s ease'
+                                                            }}
+                                                        >
+                                                            {isChecked ? '✓' : ''}
+                                                        </div>
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                ))
+            )}
 
             {isEditMode && (
-                <div style={{ padding: '10px' }}>
-                    <button onClick={() => handleAddRow()} style={{ background: 'transparent', border: '1px dashed #cbd5e1', color: '#64748b', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>+ Add Task</button>
-                </div>
+                <button 
+                    onClick={() => handleAddRow('')} 
+                    style={{ marginTop: '15px', background: 'white', border: '1px dashed #cbd5e1', color: '#475569', padding: '10px', borderRadius: '8px', cursor: 'pointer', width: '100%', fontWeight: 'bold', transition: 'background 0.2s' }}
+                >
+                    + Add Task
+                </button>
             )}
         </div>
     );

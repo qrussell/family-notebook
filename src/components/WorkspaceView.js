@@ -293,7 +293,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
     // Dynamic Sidebar Styling (Transforms into a slide-out drawer on mobile)
     const sidebarStyle = isMobile ? {
         position: 'fixed', top: 0, left: 0, height: '100vh', width: '280px',
-        backgroundColor: '#f1f5f9', padding: '20px', zIndex: 1000, /* INCREASED FROM 100 */
+        backgroundColor: '#f1f5f9', padding: '20px', zIndex: 999999, /* INCREASED FROM 100 */
         boxShadow: '4px 0 15px rgba(0,0,0,0.2)',
         transform: showMobileSidebar ? 'translateX(0)' : 'translateX(-100%)',
         transition: 'transform 0.3s ease-in-out',
