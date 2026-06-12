@@ -282,45 +282,64 @@ function fn_api_add_workspace_user($request) {
     $email = sanitize_email($request->get_json_params()['email']);
     $u = get_user_by('email', $email);
     
-    if (!$u) return new WP_Error('404', 'User not found. They must register an account first.');
+    // Get workspace details for the email
+    $workspace = $wpdb->get_row($wpdb->prepare("SELECT workspace_name, join_code FROM {$wpdb->prefix}fn_workspaces WHERE id = %d", $ws));
+    if (!$workspace) return new WP_Error('404', 'Workspace not found.');
+    
+    $workspace_name = $workspace->workspace_name;
+    $login_url = get_option('fn_app_login_url', site_url());
 
-    // Check if they are already in the SQL table to prevent duplicate emails
-    $table_members = $wpdb->prefix . 'fn_workspace_members';
-    $existing = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $u->ID));
+    add_filter( 'wp_mail_content_type', function() { return 'text/html'; } );
 
-    if ($existing == 0) {
-        // 1. Add user to the custom Workspace Members SQL table
-        $wpdb->insert($table_members, [
-            'workspace_id' => $ws,
-            'user_id'      => $u->ID,
-            'app_role'     => 'viewer'
-        ]);
-
-        // 2. Fetch the real workspace name for the email
-        $workspace_name = $wpdb->get_var($wpdb->prepare("SELECT workspace_name FROM {$wpdb->prefix}fn_workspaces WHERE id = %d", $ws)) ?: 'Family Notebook Workspace';
-
-        // 3. Send the HTML Email
-        add_filter( 'wp_mail_content_type', function() { return 'text/html'; } );
-        
-        $login_url = get_option('fn_app_login_url', site_url());
+    if (!$u) {
+        // SCENARIO 1: User does NOT exist in WordPress yet.
+        // Send them a special invite link with the join code attached.
+        $invite_link = add_query_arg('fn_join', $workspace->join_code, $login_url);
         
         $message = "
             <html>
             <body style='font-family: sans-serif; color: #334155;'>
-                <h2>You've been invited!</h2>
-                <p>Hi " . esc_html($u->display_name) . ",</p>
-                <p>You have been granted access to the workspace <strong>" . esc_html($workspace_name) . "</strong>.</p>
-                <p><br><a href='" . esc_url($login_url) . "' style='background:#0284c7; color:#fff; padding:10px 20px; text-decoration:none; border-radius:4px; display:inline-block;'>Access Your Workspace</a><br><br></p>
+                <h2>You've been invited to Family Notebook!</h2>
+                <p>Someone has invited you to join the workspace <strong>" . esc_html($workspace_name) . "</strong>.</p>
+                <p>To accept this invitation, please create a free account by clicking the link below:</p>
+                <p><br><a href='" . esc_url($invite_link) . "' style='background:#10b981; color:#fff; padding:10px 20px; text-decoration:none; border-radius:4px; display:inline-block;'>Create Account & Join</a><br><br></p>
                 <p>Best regards,<br>The Family Notebook Team</p>
             </body>
             </html>
         ";
-
         wp_mail($email, "Invitation: Join " . $workspace_name, $message);
         remove_filter( 'wp_mail_content_type', function() { return 'text/html'; } );
+        
+        // Return a special status so the React app knows it was an external invite
+        return rest_ensure_response(['success' => true, 'status' => 'invite_sent_to_new_user']);
     }
 
-    return rest_ensure_response(['success' => true]);
+    // SCENARIO 2: User ALREADY exists (Your original logic)
+    $table_members = $wpdb->prefix . 'fn_workspace_members';
+    $existing = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $u->ID));
+
+    if ($existing == 0) {
+        $wpdb->insert($table_members, [
+            'workspace_id' => $ws,
+            'user_id'      => $u->ID,
+            'app_role'     => 'viewer' // Default role
+        ]);
+        
+        $message = "
+            <html>
+            <body style='font-family: sans-serif; color: #334155;'>
+                <h2>You've been added to a new workspace!</h2>
+                <p>Hi " . esc_html($u->display_name) . ",</p>
+                <p>You have been granted access to the workspace <strong>" . esc_html($workspace_name) . "</strong>.</p>
+                <p><br><a href='" . esc_url($login_url) . "' style='background:#0284c7; color:#fff; padding:10px 20px; text-decoration:none; border-radius:4px; display:inline-block;'>Access Your Workspace</a><br><br></p>
+            </body>
+            </html>
+        ";
+        wp_mail($email, "Update: Access granted to " . $workspace_name, $message);
+    }
+    remove_filter( 'wp_mail_content_type', function() { return 'text/html'; } );
+
+    return rest_ensure_response(['success' => true, 'status' => 'added_existing_user']);
 }
 
 function fn_api_remove_workspace_user($request) {
@@ -389,21 +408,91 @@ function fn_render_admin_settings() {
     </div>
     <?php
 }
+/**
+ * Catch the join link and set a cookie before any HTML loads
+ */
+add_action('init', 'fn_capture_join_code');
+function fn_capture_join_code() {
+    if (isset($_GET['fn_join']) && !empty($_GET['fn_join'])) {
+        // Set a cookie that lasts for 1 hour to remember what workspace they are trying to join
+        setcookie('fn_pending_join_code', sanitize_text_field($_GET['fn_join']), time() + 3600, COOKIEPATH, COOKIE_DOMAIN);
+    }
+}
 
+/**
+ * Process the join code immediately after a user successfully logs in or registers
+ */
+add_action('wp_login', 'fn_process_pending_join_code', 10, 2);
+function fn_process_pending_join_code($user_login, $user) {
+    if (isset($_COOKIE['fn_pending_join_code'])) {
+        global $wpdb;
+        $join_code = sanitize_text_field($_COOKIE['fn_pending_join_code']);
+        
+        // Find the workspace by its join code
+        $workspace_id = $wpdb->get_var($wpdb->prepare("SELECT id FROM {$wpdb->prefix}fn_workspaces WHERE join_code = %s", $join_code));
+        
+        if ($workspace_id) {
+            // Check if they are already a member just in case
+            $table_members = $wpdb->prefix . 'fn_workspace_members';
+            $existing = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_members WHERE workspace_id = %d AND user_id = %d", $workspace_id, $user->ID));
+            
+            if ($existing == 0) {
+                // Add them to the workspace as a viewer
+                $wpdb->insert($table_members, [
+                    'workspace_id' => $workspace_id,
+                    'user_id'      => $user->ID,
+                    'app_role'     => 'viewer'
+                ]);
+            }
+        }
+        
+        // Clear the cookie so it doesn't process again
+        setcookie('fn_pending_join_code', '', time() - 3600, COOKIEPATH, COOKIE_DOMAIN);
+    }
+}
 // 8. Auth Gate & Shortcode
 add_shortcode( 'family_notebook_app', 'fn_render_app_shortcode' );
 function fn_render_app_shortcode() {
     if ( ! is_user_logged_in() ) {
         ob_start();
         ?>
-        <div style="max-width: 400px; margin: 40px auto; padding: 30px; background: #fff; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
-            <h2 style="text-align: center;">Family Notebook</h2>
+        <div style="max-width: 400px; margin: 40px auto; padding: 30px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); font-family: sans-serif;">
+            <h2 style="text-align: center; color: #1e293b; margin-top: 0; margin-bottom: 25px;">Family Notebook</h2>
+            
             <?php 
+            // 1. Explicitly render the Google Login button only once
             if ( shortcode_exists( 'nextend_social_login' ) ) {
-                echo '<div style="margin-bottom: 20px;">' . do_shortcode( '[nextend_social_login provider="google"]' ) . '</div>';
+                echo '<div style="display: flex; justify-content: center; margin-bottom: 25px;">' . do_shortcode( '[nextend_social_login provider="google"]' ) . '</div>';
+                
+                // Add a modern visual separator
+                echo '<div style="display: flex; align-items: center; text-align: center; color: #94a3b8; font-size: 14px; margin-bottom: 20px;">
+                        <div style="flex: 1; border-bottom: 1px solid #e2e8f0;"></div>
+                        <span style="padding: 0 10px;">or login with email</span>
+                        <div style="flex: 1; border-bottom: 1px solid #e2e8f0;"></div>
+                      </div>';
             }
-            wp_login_form( ['redirect' => get_permalink(), 'label_username' => 'Email'] );
             ?>
+
+            <form name="loginform" id="loginform" action="<?php echo esc_url( site_url( 'wp-login.php', 'login_post' ) ); ?>" method="post">
+                <p style="margin-bottom: 15px;">
+                    <label for="user_login" style="display: block; font-size: 14px; color: #475569; margin-bottom: 5px; font-weight: bold;">Email or Username</label>
+                    <input type="text" name="log" id="user_login" value="" style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; font-size: 16px;" required />
+                </p>
+                <p style="margin-bottom: 20px;">
+                    <label for="user_pass" style="display: block; font-size: 14px; color: #475569; margin-bottom: 5px; font-weight: bold;">Password</label>
+                    <input type="password" name="pwd" id="user_pass" value="" style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; font-size: 16px;" required />
+                </p>
+                <p style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <label style="font-size: 14px; color: #475569; cursor: pointer;">
+                        <input name="rememberme" type="checkbox" id="rememberme" value="forever" style="margin-right: 5px;" /> Remember Me
+                    </label>
+                    <a href="<?php echo esc_url( wp_lostpassword_url() ); ?>" style="font-size: 14px; color: #0284c7; text-decoration: none;">Forgot Password?</a>
+                </p>
+                <p style="margin: 0;">
+                    <input type="submit" name="wp-submit" id="wp-submit" value="Log In" style="width: 100%; background-color: #0f172a; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 16px;" />
+                    <input type="hidden" name="redirect_to" value="<?php echo esc_url( get_permalink() ); ?>" />
+                </p>
+            </form>
         </div>
         <?php
         return ob_get_clean();
