@@ -56,10 +56,11 @@ const WorkspaceView = ({ workspace, onBack }) => {
     const [isInviting, setIsInviting] = useState(false);
 	
 	useEffect(() => {
-        const handleResize = () => setIsMobile(window.innerWidth < 768);
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
-    }, []);
+        // Fetch Templates from the Library for this specific workspace (Includes Global)
+        apiFetch({ path: `/family-notebook/v1/templates?workspace_id=${workspace.id}` })
+            .then(data => setTemplates(data))
+            .catch(err => console.error("Failed to load templates", err));
+    }, [workspace.id]); // Make sure to add workspace.id to the dependency array
     // Calculate the best text color for the current workspace header
     const headerTextColor = getContrastTextColor(workspace.color);
     

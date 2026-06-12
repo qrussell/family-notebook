@@ -35,6 +35,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
             })
             .catch(console.error);
     }, [noteId]);
+
     // --- REAL-TIME POLLING SYNC ---
     useEffect(() => {
         // 1. Only poll if we are NOT in Edit Mode
@@ -54,6 +55,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
 
         return () => clearInterval(syncInterval);
     }, [noteId, isEditMode, tabs]);
+
     const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
     const activeBlocks = activeTab ? (activeTab.blocks || []) : [];
 
@@ -85,7 +87,11 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
         apiFetch({
             path: '/family-notebook/v1/templates',
             method: 'POST',
-            data: { title: templateName, content: { tabs: tabs } } 
+            data: { 
+                title: templateName, 
+                content: { tabs: tabs },
+                workspace_id: workspaceId // <-- NEW: Passes the workspace scope to the backend
+            } 
         }).then((response) => {
             alert("Layout saved to your Template Library!");
             if (onTemplateSaved) onTemplateSaved({ id: response.id, title: templateName });
@@ -151,8 +157,8 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
         if (activeTabId === tabId) setActiveTabId(remainingTabs[0].id);
         if (!isEditMode) silentAutoSave(remainingTabs);
     };
-	
-	const handleMoveTab = (tabId, direction, e) => {
+    
+    const handleMoveTab = (tabId, direction, e) => {
         e.stopPropagation();
         
         // Find the current position of the tab
@@ -176,6 +182,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
         setTabs(newTabs);
         if (!isEditMode) silentAutoSave(newTabs); // Save automatically if we aren't in layout mode
     };
+    
     // --- BLOCK MANAGEMENT ---
     const addBlock = (type) => {
         let newBlock = { id: `blk_${Date.now()}`, type: type };
@@ -362,13 +369,13 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
             </div>
 
             {isEditMode && (
-				<div className="fn-hide-print" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', padding: '15px', backgroundColor: '#f1f5f9', borderRadius: '8px', justifyContent: 'center', alignItems: 'center' }}>
-					<span style={{ color: '#64748b', fontWeight: 'bold', width: '100%', textAlign: 'center', marginBottom: '5px' }}>Add Block:</span>
-					<button onClick={() => addBlock('rich-text')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>📝 Text</button>
-					<button onClick={() => addBlock('checklist')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>✅ Checklist</button>
-					<button onClick={() => addBlock('chore-chart')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>💰 Chore Chart</button>
-				</div>
-			)}
+                <div className="fn-hide-print" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', padding: '15px', backgroundColor: '#f1f5f9', borderRadius: '8px', justifyContent: 'center', alignItems: 'center' }}>
+                    <span style={{ color: '#64748b', fontWeight: 'bold', width: '100%', textAlign: 'center', marginBottom: '5px' }}>Add Block:</span>
+                    <button onClick={() => addBlock('rich-text')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>📝 Text</button>
+                    <button onClick={() => addBlock('checklist')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>✅ Checklist</button>
+                    <button onClick={() => addBlock('chore-chart')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>💰 Chore Chart</button>
+                </div>
+            )}
         </div>
     );
 };

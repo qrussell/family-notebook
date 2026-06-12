@@ -105,11 +105,6 @@ function fn_register_api_endpoints() {
     register_rest_route( 'family-notebook/v1', '/templates/(?P<id>\d+)', ['methods' => 'DELETE', 'callback' => 'fn_api_delete_template', 'permission_callback' => 'is_user_logged_in']);
     register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)/users', [['methods' => 'GET', 'callback' => 'fn_api_get_workspace_users', 'permission_callback' => 'is_user_logged_in'], ['methods' => 'POST', 'callback' => 'fn_api_add_workspace_user', 'permission_callback' => 'is_user_logged_in']]);
     register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)/users/(?P<user_id>\d+)', ['methods' => 'DELETE', 'callback' => 'fn_api_remove_workspace_user', 'permission_callback' => 'is_user_logged_in']);
-	register_rest_route( 'family-notebook/v1', '/notes/(?P<id>\d+)', [
-        ['methods' => 'GET', 'callback' => 'fn_api_get_single_note', 'permission_callback' => 'is_user_logged_in'],
-        ['methods' => 'PUT', 'callback' => 'fn_api_update_note', 'permission_callback' => 'is_user_logged_in'],
-        ['methods' => 'DELETE', 'callback' => 'fn_api_delete_note', 'permission_callback' => 'is_user_logged_in']
-    ]);
     
     // NEW: Copy Note Route
     register_rest_route( 'family-notebook/v1', '/notes/(?P<id>\d+)/copy', [
@@ -130,10 +125,75 @@ function fn_api_create_workspace($request) {
     global $wpdb;
     $user_id = get_current_user_id();
     $params = $request->get_json_params();
-    $wpdb->insert($wpdb->prefix . 'fn_workspaces', ['workspace_name' => sanitize_text_field($params['name']), 'theme_color' => sanitize_hex_color($params['color']), 'join_code' => strtoupper(substr(md5(uniqid(rand(), true)), 0, 8)), 'created_by' => $user_id]);
-    $id = $wpdb->insert_id;
-    $wpdb->insert($wpdb->prefix . 'fn_workspace_members', ['workspace_id' => $id, 'user_id' => $user_id, 'app_role' => 'owner']);
-    return rest_ensure_response(['id' => $id, 'name' => $params['name'], 'color' => $params['color'], 'role' => 'owner']);
+    
+    // 1. Create the New Workspace
+    $wpdb->insert($wpdb->prefix . 'fn_workspaces', [
+        'workspace_name' => sanitize_text_field($params['name']), 
+        'theme_color'    => sanitize_hex_color($params['color']), 
+        'join_code'      => strtoupper(substr(md5(uniqid(rand(), true)), 0, 8)), 
+        'created_by'     => $user_id
+    ]);
+    $workspace_id = $wpdb->insert_id;
+    
+    // 2. Add the creator as the Owner
+    $wpdb->insert($wpdb->prefix . 'fn_workspace_members', [
+        'workspace_id' => $workspace_id, 
+        'user_id'      => $user_id, 
+        'app_role'     => 'owner'
+    ]);
+
+    // 3. AUTO-PROVISION FROM MASTER WORKSPACE
+    $starter_id = intval(get_option('fn_starter_workspace_id', 0));
+    
+    if ($starter_id > 0 && $starter_id !== $workspace_id) {
+        
+        // Find all root Folders in the starter workspace
+        $folders = get_posts([
+            'post_type'      => 'fn_note_page',
+            'post_parent'    => 0,
+            'posts_per_page' => -1,
+            'meta_query'     => [
+                ['key' => '_fn_workspace_id', 'value' => $starter_id, 'compare' => '=']
+            ]
+        ]);
+
+        foreach ($folders as $folder) {
+            // Duplicate the Folder
+            $new_folder_id = wp_insert_post([
+                'post_title'   => $folder->post_title,
+                'post_content' => $folder->post_content,
+                'post_type'    => 'fn_note_page',
+                'post_status'  => 'publish'
+            ]);
+            update_post_meta($new_folder_id, '_fn_workspace_id', $workspace_id);
+
+            // Find all Notes inside this specific folder
+            $notes = get_posts([
+                'post_type'      => 'fn_note_page',
+                'post_parent'    => $folder->ID,
+                'posts_per_page' => -1
+            ]);
+
+            foreach ($notes as $note) {
+                // Duplicate the Note and assign it to the new folder
+                $new_note_id = wp_insert_post([
+                    'post_title'   => $note->post_title,
+                    'post_content' => $note->post_content,
+                    'post_type'    => 'fn_note_page',
+                    'post_parent'  => $new_folder_id,
+                    'post_status'  => 'publish'
+                ]);
+                update_post_meta($new_note_id, '_fn_workspace_id', $workspace_id);
+            }
+        }
+    }
+
+    return rest_ensure_response([
+        'id' => $workspace_id, 
+        'name' => $params['name'], 
+        'color' => $params['color'], 
+        'role' => 'owner'
+    ]);
 }
 
 function fn_api_get_notes($request) {
@@ -235,14 +295,37 @@ function fn_api_delete_note($request) {
     return rest_ensure_response(['deleted' => true]);
 }
 
-function fn_api_get_templates() {
-    $posts = get_posts(['post_type' => 'fn_template', 'posts_per_page' => -1]);
+function fn_api_get_templates($request) {
+    $ws_id = intval($request->get_param('workspace_id'));
+    
+    $args = [
+        'post_type'      => 'fn_template',
+        'posts_per_page' => -1,
+        'meta_query'     => [
+            'relation' => 'OR',
+            // Get Global templates (meta is 0 or doesn't exist)
+            [ 'key' => '_fn_workspace_id', 'value' => [0, ''], 'compare' => 'IN' ],
+            [ 'key' => '_fn_workspace_id', 'compare' => 'NOT EXISTS' ]
+        ]
+    ];
+
+    // If a workspace is provided, also include templates specific to this workspace
+    if ($ws_id > 0) {
+        $args['meta_query'][] = [
+            'key'     => '_fn_workspace_id',
+            'value'   => $ws_id,
+            'compare' => '='
+        ];
+    }
+
+    $posts = get_posts($args);
     return rest_ensure_response(array_map(fn($p) => ['id' => $p->ID, 'title' => $p->post_title, 'content' => json_decode($p->post_content, true)], $posts));
 }
 
 function fn_api_save_template( $request ) {
     $params = $request->get_json_params();
     $clean_content = $params['content'];
+    $ws_id = isset($params['workspace_id']) ? intval($params['workspace_id']) : 0; // NEW: Default to 0 (Global) if none provided
 
     // Helper function to deep-clean blocks
     $clean_blocks = function(&$blocks) {
@@ -256,15 +339,11 @@ function fn_api_save_template( $request ) {
         }
     };
 
-    // Check if it's the new Tabbed structure or a legacy block array
     if ( isset($clean_content['tabs']) && is_array($clean_content['tabs']) ) {
         foreach ( $clean_content['tabs'] as &$tab ) {
-            if ( isset($tab['blocks']) && is_array($tab['blocks']) ) {
-                $clean_blocks($tab['blocks']);
-            }
+            if ( isset($tab['blocks']) && is_array($tab['blocks']) ) $clean_blocks($tab['blocks']);
         }
     } else if ( is_array($clean_content) ) {
-        // Legacy Note Array fallback
         $clean_blocks($clean_content); 
     }
 
@@ -274,6 +353,9 @@ function fn_api_save_template( $request ) {
         'post_type'    => 'fn_template',
         'post_status'  => 'publish'
     ]);
+    
+    // NEW: Save the template's workspace scope
+    update_post_meta($id, '_fn_workspace_id', $ws_id);
     
     return rest_ensure_response([ 'id' => $id, 'message' => 'Template saved.' ]);
 }
@@ -428,15 +510,19 @@ function fn_register_admin_menu() {
     add_menu_page('Family Notebook Settings', 'Family Notebook', 'manage_options', 'family-notebook', 'fn_render_admin_settings', 'dashicons-book', 30);
 }
 // Register the setting in the database
+// Register the settings in the database
 add_action( 'admin_init', 'fn_register_plugin_settings' );
 function fn_register_plugin_settings() {
     register_setting( 'fn_settings_group', 'fn_app_login_url' );
+    register_setting( 'fn_settings_group', 'fn_starter_workspace_id' ); // NEW: Register starter workspace
 }
+
 function fn_render_admin_settings() {
-    // Security check
-    if ( ! current_user_can( 'manage_options' ) ) {
-        return;
-    }
+    if ( ! current_user_can( 'manage_options' ) ) return;
+    
+    global $wpdb;
+    $workspaces = $wpdb->get_results("SELECT id, workspace_name FROM {$wpdb->prefix}fn_workspaces ORDER BY workspace_name ASC");
+    $starter_ws = get_option('fn_starter_workspace_id', 0);
     ?>
     <div class="wrap">
         <h1>Family Notebook Administration</h1>
@@ -444,7 +530,6 @@ function fn_render_admin_settings() {
         
         <form method="post" action="options.php">
             <?php 
-                // These functions link the form to the setting we registered above
                 settings_fields( 'fn_settings_group' ); 
                 do_settings_sections( 'fn_settings_group' ); 
             ?>
@@ -452,13 +537,22 @@ function fn_render_admin_settings() {
                 <tr valign="top">
                     <th scope="row">App Login URL</th>
                     <td>
-                        <input 
-                            type="url" 
-                            name="fn_app_login_url" 
-                            value="<?php echo esc_attr( get_option('fn_app_login_url', site_url()) ); ?>" 
-                            style="width: 100%; max-width: 400px;" 
-                        />
-                        <p class="description">The URL where your <code>[family_notebook_app]</code> shortcode is located. This link is sent to users in their invitation emails.</p>
+                        <input type="url" name="fn_app_login_url" value="<?php echo esc_attr( get_option('fn_app_login_url', site_url()) ); ?>" style="width: 100%; max-width: 400px;" />
+                        <p class="description">The URL where your <code>[family_notebook_app]</code> shortcode is located.</p>
+                    </td>
+                </tr>
+                <tr valign="top">
+                    <th scope="row">Starter Kit Workspace</th>
+                    <td>
+                        <select name="fn_starter_workspace_id" style="width: 100%; max-width: 400px;">
+                            <option value="0">-- None (Start Empty) --</option>
+                            <?php foreach($workspaces as $ws): ?>
+                                <option value="<?php echo esc_attr($ws->id); ?>" <?php selected($starter_ws, $ws->id); ?>>
+                                    <?php echo esc_html($ws->workspace_name); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <p class="description">Select a master workspace. Whenever a new workspace is created, it will automatically clone all folders and notes from this workspace as a starter kit.</p>
                     </td>
                 </tr>
             </table>
@@ -566,4 +660,66 @@ function fn_create_custom_tables() {
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
     dbDelta("CREATE TABLE {$wpdb->prefix}fn_workspaces (id bigint(20) NOT NULL AUTO_INCREMENT, workspace_name varchar(255) NOT NULL, theme_color varchar(7) NOT NULL, join_code varchar(12) NOT NULL, created_by bigint(20) NOT NULL, PRIMARY KEY (id))");
     dbDelta("CREATE TABLE {$wpdb->prefix}fn_workspace_members (id bigint(20) NOT NULL AUTO_INCREMENT, workspace_id bigint(20) NOT NULL, user_id bigint(20) NOT NULL, app_role varchar(50) NOT NULL, PRIMARY KEY (id))");
+}
+
+// ==========================================
+// ADMIN UI: TEMPLATE SCOPE MANAGEMENT
+// ==========================================
+
+// 1. Add Meta Box to the Template Editor
+add_action('add_meta_boxes', 'fn_template_meta_box');
+function fn_template_meta_box() {
+    add_meta_box('fn_template_workspace', 'Template Scope', 'fn_template_meta_box_html', 'fn_template', 'side', 'default');
+}
+
+function fn_template_meta_box_html($post) {
+    global $wpdb;
+    $current_ws = get_post_meta($post->ID, '_fn_workspace_id', true);
+    if ($current_ws === '') $current_ws = 0; // Default to Global
+    
+    $workspaces = $wpdb->get_results("SELECT id, workspace_name FROM {$wpdb->prefix}fn_workspaces ORDER BY workspace_name ASC");
+
+    echo '<label for="fn_workspace_id" style="font-weight:bold;">Assign to Workspace:</label>';
+    echo '<select name="fn_workspace_id" id="fn_workspace_id" style="width:100%; margin-top:10px;">';
+    echo '<option value="0" ' . selected($current_ws, 0, false) . '>🌎 Global (All Workspaces)</option>';
+    
+    foreach($workspaces as $ws) {
+        echo '<option value="' . esc_attr($ws->id) . '" ' . selected($current_ws, $ws->id, false) . '>📁 ' . esc_html($ws->workspace_name) . '</option>';
+    }
+    echo '</select>';
+    echo '<p class="description">Global templates are available to everyone. Workspace templates are only visible inside the selected family/group.</p>';
+    wp_nonce_field('fn_save_template_scope', 'fn_template_scope_nonce');
+}
+
+// 2. Save the Meta Box Value
+add_action('save_post_fn_template', 'fn_save_template_meta');
+function fn_save_template_meta($post_id) {
+    if (!isset($_POST['fn_template_scope_nonce']) || !wp_verify_nonce($_POST['fn_template_scope_nonce'], 'fn_save_template_scope')) return;
+    if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) return;
+    if (!current_user_can('edit_post', $post_id)) return;
+
+    if (isset($_POST['fn_workspace_id'])) {
+        update_post_meta($post_id, '_fn_workspace_id', intval($_POST['fn_workspace_id']));
+    }
+}
+
+// 3. Add Custom Column to Template List Table for easy viewing
+add_filter('manage_fn_template_posts_columns', 'fn_template_columns');
+function fn_template_columns($columns) {
+    $columns['workspace_scope'] = 'Workspace Scope';
+    return $columns;
+}
+
+add_action('manage_fn_template_posts_custom_column', 'fn_template_column_content', 10, 2);
+function fn_template_column_content($column, $post_id) {
+    if ($column === 'workspace_scope') {
+        $ws_id = get_post_meta($post_id, '_fn_workspace_id', true);
+        if (!$ws_id || $ws_id == 0) {
+            echo '<span style="color:#0284c7; font-weight:bold;">🌎 Global</span>';
+        } else {
+            global $wpdb;
+            $name = $wpdb->get_var($wpdb->prepare("SELECT workspace_name FROM {$wpdb->prefix}fn_workspaces WHERE id = %d", $ws_id));
+            echo esc_html($name ? "📁 " . $name : "Unknown Workspace");
+        }
+    }
 }
