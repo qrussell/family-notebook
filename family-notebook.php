@@ -105,6 +105,18 @@ function fn_register_api_endpoints() {
     register_rest_route( 'family-notebook/v1', '/templates/(?P<id>\d+)', ['methods' => 'DELETE', 'callback' => 'fn_api_delete_template', 'permission_callback' => 'is_user_logged_in']);
     register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)/users', [['methods' => 'GET', 'callback' => 'fn_api_get_workspace_users', 'permission_callback' => 'is_user_logged_in'], ['methods' => 'POST', 'callback' => 'fn_api_add_workspace_user', 'permission_callback' => 'is_user_logged_in']]);
     register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)/users/(?P<user_id>\d+)', ['methods' => 'DELETE', 'callback' => 'fn_api_remove_workspace_user', 'permission_callback' => 'is_user_logged_in']);
+	register_rest_route( 'family-notebook/v1', '/notes/(?P<id>\d+)', [
+        ['methods' => 'GET', 'callback' => 'fn_api_get_single_note', 'permission_callback' => 'is_user_logged_in'],
+        ['methods' => 'PUT', 'callback' => 'fn_api_update_note', 'permission_callback' => 'is_user_logged_in'],
+        ['methods' => 'DELETE', 'callback' => 'fn_api_delete_note', 'permission_callback' => 'is_user_logged_in']
+    ]);
+    
+    // NEW: Copy Note Route
+    register_rest_route( 'family-notebook/v1', '/notes/(?P<id>\d+)/copy', [
+        'methods' => 'POST', 
+        'callback' => 'fn_api_copy_note', 
+        'permission_callback' => 'is_user_logged_in'
+    ]);
 }
 
 // 6. Callback Functions
@@ -162,8 +174,56 @@ function fn_api_update_note($request) {
     $ws = intval(get_post_meta($id, '_fn_workspace_id', true));
     if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
     $p = $request->get_json_params();
-    wp_update_post(['ID' => $id, 'post_title' => sanitize_text_field($p['title']), 'post_content' => wp_json_encode($p['content'])]);
+
+    // Safely build an array of only the fields being updated
+    $update_data = ['ID' => $id];
+    
+    if ( isset($p['title']) ) {
+        $update_data['post_title'] = sanitize_text_field($p['title']);
+    }
+    if ( isset($p['content']) ) {
+        $update_data['post_content'] = wp_json_encode($p['content']);
+    }
+    if ( isset($p['parent_id']) ) {
+        $update_data['post_parent'] = intval($p['parent_id']); // This moves the note
+    }
+
+    wp_update_post($update_data);
     return rest_ensure_response(['message' => 'Success']);
+}
+
+// NEW: Handle copying a note to a new folder
+function fn_api_copy_note($request) {
+    $original_id = intval($request['id']);
+    $ws = intval(get_post_meta($original_id, '_fn_workspace_id', true));
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    
+    $p = $request->get_json_params();
+    $new_parent_id = isset($p['parent_id']) ? intval($p['parent_id']) : 0;
+    
+    $original_post = get_post($original_id);
+    if (!$original_post) return new WP_Error('404', 'Note not found');
+    
+    // Insert a duplicated post
+    $new_post_id = wp_insert_post([
+        'post_title'   => $original_post->post_title . ' (Copy)',
+        'post_content' => $original_post->post_content,
+        'post_status'  => 'publish',
+        'post_type'    => 'fn_note_page',
+        'post_parent'  => $new_parent_id,
+    ]);
+    
+    // Ensure it belongs to the same workspace
+    update_post_meta($new_post_id, '_fn_workspace_id', $ws);
+    
+    $content = json_decode($original_post->post_content, true) ?: [];
+    
+    return rest_ensure_response([
+        'id' => $new_post_id, 
+        'title' => $original_post->post_title . ' (Copy)', 
+        'parent_id' => $new_parent_id, 
+        'content' => $content
+    ]);
 }
 
 function fn_api_delete_note($request) {

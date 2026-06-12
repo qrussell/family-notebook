@@ -38,7 +38,9 @@ const WorkspaceView = ({ workspace, onBack }) => {
     
 	// Editor State
     const [activeNoteId, setActiveNoteId] = useState(null);
-
+	// Move/Copy Note State
+    // Format: { id: 123, type: 'move' | 'copy' }
+    const [actionNote, setActionNote] = useState(null);
 	// Mobile Responsiveness State
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
     const [showMobileSidebar, setShowMobileSidebar] = useState(false);
@@ -150,6 +152,31 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 setActiveNoteId(newItem.id); // Instantly open the newly created note!
             }
         }).catch(console.error);
+    };
+	// Execute Move or Copy
+    const submitNoteAction = (newFolderId) => {
+        if (!newFolderId || !actionNote) return;
+        
+        if (actionNote.type === 'move') {
+            apiFetch({
+                path: `/family-notebook/v1/notes/${actionNote.id}`,
+                method: 'PUT',
+                data: { parent_id: newFolderId } 
+            }).then(() => {
+                setItems(items.map(item => item.id === actionNote.id ? { ...item, parent_id: newFolderId } : item));
+                setActionNote(null);
+            }).catch(err => { console.error(err); alert("Failed to move note."); });
+        } 
+        else if (actionNote.type === 'copy') {
+            apiFetch({
+                path: `/family-notebook/v1/notes/${actionNote.id}/copy`,
+                method: 'POST',
+                data: { parent_id: newFolderId } 
+            }).then((newNote) => {
+                setItems([...items, newNote]); // Add the duplicated note to local state
+                setActionNote(null);
+            }).catch(err => { console.error(err); alert("Failed to copy note."); });
+        }
     };
 	// 1. Delete a Folder
     const handleDeleteFolder = () => {
@@ -292,8 +319,8 @@ const WorkspaceView = ({ workspace, onBack }) => {
     });
     // Dynamic Sidebar Styling (Transforms into a slide-out drawer on mobile)
     const sidebarStyle = isMobile ? {
-        position: 'fixed', top: 0, left: 0, height: '100vh', width: '280px',
-        backgroundColor: '#f1f5f9', padding: '20px', zIndex: 999999, /* INCREASED FROM 100 */
+        position: 'absolute', top: 0, left: 0, bottom: 0, height: '100%', width: '280px',
+        backgroundColor: '#f1f5f9', padding: '20px', zIndex: 999999,
         boxShadow: '4px 0 15px rgba(0,0,0,0.2)',
         transform: showMobileSidebar ? 'translateX(0)' : 'translateX(-100%)',
         transition: 'transform 0.3s ease-in-out',
@@ -304,12 +331,12 @@ const WorkspaceView = ({ workspace, onBack }) => {
     const noteCardStyle = { border: '1px solid #e2e8f0', borderRadius: '8px', padding: '15px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', backgroundColor: '#f8fafc' };
 
     return (
-        <div>
+        <div style={{ position: 'relative', overflowX: 'hidden', minHeight: '100vh' }}>
             {/* MOBILE BACKDROP SHADOW */}
             {isMobile && showMobileSidebar && (
                 <div 
                     onClick={() => setShowMobileSidebar(false)} 
-                    style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 99 }} 
+                    style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 999998 }} 
                 />
             )}
             {/* MANAGE ACCESS MODAL */}
@@ -354,6 +381,37 @@ const WorkspaceView = ({ workspace, onBack }) => {
                     </div>
                 </div>
             )}
+			
+			{/* MOVE/COPY NOTE MODAL */}
+            {actionNote && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
+                    <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '8px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
+                        <h3 style={{ margin: '0 0 20px 0', color: '#1e293b', textTransform: 'capitalize' }}>
+                            {actionNote.type} Note
+                        </h3>
+                        <p style={{ marginBottom: '15px', color: '#64748b', fontSize: '14px' }}>Select destination folder:</p>
+                        
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto' }}>
+                            {/* We filter out the current folder IF it's a move action. For copy, they might want to duplicate in the same folder */}
+                            {folders.filter(f => actionNote.type === 'copy' || f.id !== selectedFolder?.id).map(f => (
+                                <button
+                                    key={f.id}
+                                    onClick={() => submitNoteAction(f.id)}
+                                    style={{ padding: '12px', textAlign: 'left', border: '1px solid #cbd5e1', borderRadius: '4px', background: 'white', cursor: 'pointer', color: '#334155', fontWeight: 'bold', transition: 'background 0.2s' }}
+                                >
+                                    📁 {f.title}
+                                </button>
+                            ))}
+                            {folders.filter(f => actionNote.type === 'copy' || f.id !== selectedFolder?.id).length === 0 && (
+                                <p style={{ color: '#ef4444', fontSize: '14px', textAlign: 'center', padding: '10px 0' }}>No other folders available.</p>
+                            )}
+                        </div>
+                        
+                        <button onClick={() => setActionNote(null)} style={{ marginTop: '20px', width: '100%', padding: '10px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', color: '#475569', fontWeight: 'bold' }}>Cancel</button>
+                    </div>
+                </div>
+            )}
+			
             {/* HEADER */}
             {/* UPDATED: Added className="fn-hide-print" */}
             <div style={headerStyle} className="fn-hide-print">
@@ -561,13 +619,25 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                                     <span style={{ fontSize: '12px', color: '#94a3b8' }}>Tap to view</span>
                                                 </div>
                                                 
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); setActionNote({ id: note.id, type: 'copy' }); }} 
+                                                        style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '5px 8px', cursor: 'pointer', color: '#10b981' }}
+                                                        title="Copy Note"
+                                                    >⎘ Copy</button>
+
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); setActionNote({ id: note.id, type: 'move' }); }} 
+                                                        style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '5px 8px', cursor: 'pointer', color: '#0284c7' }}
+                                                        title="Move Note"
+                                                    >➡️ Move</button>
+
                                                     <button 
                                                         onClick={(e) => handleDeleteNote(e, note.id, note.title)} 
                                                         style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '5px 8px', cursor: 'pointer', color: '#ef4444' }}
                                                         title="Delete Note"
                                                     >🗑️</button>
-                                                    <span style={{ color: workspace.color, fontWeight: 'bold', fontSize: '20px' }}>&rarr;</span>
+                                                    <span style={{ color: workspace.color, fontWeight: 'bold', fontSize: '20px', marginLeft: '5px' }}>&rarr;</span>
                                                 </div>
                                             </div>
                                         ))}

@@ -151,7 +151,31 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
         if (activeTabId === tabId) setActiveTabId(remainingTabs[0].id);
         if (!isEditMode) silentAutoSave(remainingTabs);
     };
+	
+	const handleMoveTab = (tabId, direction, e) => {
+        e.stopPropagation();
+        
+        // Find the current position of the tab
+        const currentIndex = tabs.findIndex(t => t.id === tabId);
+        if (currentIndex === -1) return;
 
+        const newTabs = [...tabs];
+
+        // Swap with the previous tab
+        if (direction === 'left' && currentIndex > 0) {
+            [newTabs[currentIndex - 1], newTabs[currentIndex]] = [newTabs[currentIndex], newTabs[currentIndex - 1]];
+        } 
+        // Swap with the next tab
+        else if (direction === 'right' && currentIndex < newTabs.length - 1) {
+            [newTabs[currentIndex + 1], newTabs[currentIndex]] = [newTabs[currentIndex], newTabs[currentIndex + 1]];
+        } 
+        else {
+            return; // No change needed
+        }
+
+        setTabs(newTabs);
+        if (!isEditMode) silentAutoSave(newTabs); // Save automatically if we aren't in layout mode
+    };
     // --- BLOCK MANAGEMENT ---
     const addBlock = (type) => {
         let newBlock = { id: `blk_${Date.now()}`, type: type };
@@ -279,7 +303,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                 )}
                 
                 <div className="fn-hide-print fn-tab-bar" style={{ display: 'flex', borderBottom: '2px solid #e2e8f0', marginBottom: '20px', overflowX: 'auto', backgroundColor: '#f8fafc', borderRadius: '8px 8px 0 0' }}>
-                    {tabs.map(tab => (
+                    {tabs.map((tab, index) => (
                         <div key={tab.id} onClick={() => setActiveTabId(tab.id)} style={{ padding: '12px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: activeTabId === tab.id ? 'white' : 'transparent', borderTop: activeTabId === tab.id ? `3px solid ${workspaceColor}` : '3px solid transparent', borderRight: '1px solid #e2e8f0', fontWeight: activeTabId === tab.id ? 'bold' : 'normal', color: activeTabId === tab.id ? '#0f172a' : '#64748b' }}>
                             <input 
                                 value={tab.title} 
@@ -288,6 +312,15 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                                 onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
                                 style={{ border: 'none', background: 'transparent', outline: 'none', width: `${Math.max(tab.title.length, 6)}ch`, color: 'inherit', fontWeight: 'inherit', fontSize: '14px' }} 
                             />
+                            
+                            {/* NEW: Move Left / Right Arrows (Only visible on the active tab) */}
+                            {activeTabId === tab.id && index > 0 && (
+                                <button onClick={(e) => handleMoveTab(tab.id, 'left', e)} title="Move Left" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 2px', fontSize: '16px' }}>&larr;</button>
+                            )}
+                            {activeTabId === tab.id && index < tabs.length - 1 && (
+                                <button onClick={(e) => handleMoveTab(tab.id, 'right', e)} title="Move Right" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 2px', fontSize: '16px' }}>&rarr;</button>
+                            )}
+
                             <button onClick={(e) => handleDuplicateTab(tab.id, e)} title="Duplicate Page" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 4px', fontSize: '16px' }}>⎘</button>
                             {tabs.length > 1 && <button onClick={(e) => handleDeleteTab(tab.id, e)} title="Delete Page" style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', padding: '0 4px', fontSize: '16px' }}>&times;</button>}
                         </div>
