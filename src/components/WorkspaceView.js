@@ -31,7 +31,6 @@ const WorkspaceView = ({ workspace, onBack }) => {
     const [selectedFolder, setSelectedFolder] = useState(null);
     const [isCreatingNote, setIsCreatingNote] = useState(false);
     const [newNoteTitle, setNewNoteTitle] = useState('');
-    
 	// Template Library State
     const [templates, setTemplates] = useState([]);
     const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -44,7 +43,8 @@ const WorkspaceView = ({ workspace, onBack }) => {
 	// Mobile Responsiveness State
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
     const [showMobileSidebar, setShowMobileSidebar] = useState(false);
-	
+	// PWA Install State
+    const [installPrompt, setInstallPrompt] = useState(null);
 	// Import State
     const fileInputRef = useRef(null);
     const [isImporting, setIsImporting] = useState(false);
@@ -89,7 +89,33 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 .catch(err => console.error("Failed to load users", err));
         }
     }, [isManagingUsers, workspace.id]);
+	
+	useEffect(() => {
+        // 1. Inject Manifest dynamically
+        if (!document.querySelector('link[rel="manifest"]')) {
+            const manifestLink = document.createElement('link');
+            manifestLink.rel = 'manifest';
+            manifestLink.href = '/fn-manifest.json';
+            document.head.appendChild(manifestLink);
+        }
 
+        // 2. Register Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/fn-sw.js').catch(err => console.log('SW Reg Failed:', err));
+        }
+
+        // 3. Catch the Install Prompt
+        const handleBeforeInstallPrompt = (e) => {
+            // Prevent the mini-infobar from appearing on mobile
+            e.preventDefault();
+            // Stash the event so it can be triggered by our custom button
+            setInstallPrompt(e);
+        };
+
+        window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+        return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    }, []);
     const handleInviteUser = (e) => {
         e.preventDefault();
         if (!inviteEmail.trim()) return;
@@ -177,6 +203,18 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 setItems([...items, newNote]); // Add the duplicated note to local state
                 setActionNote(null);
             }).catch(err => { console.error(err); alert("Failed to copy note."); });
+        }
+    };
+	// Trigger PWA Installation
+    const handleInstallApp = async () => {
+        if (!installPrompt) return;
+        // Show the browser's native installation prompt
+        installPrompt.prompt();
+        // Wait for the user to respond
+        const { outcome } = await installPrompt.userChoice;
+        if (outcome === 'accepted') {
+            console.log('App Installed');
+            setInstallPrompt(null); // Hide button after install
         }
     };
 	// 1. Delete a Folder
@@ -340,26 +378,26 @@ const WorkspaceView = ({ workspace, onBack }) => {
                     style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 999998 }} 
                 />
             )}
-            {/* MANAGE ACCESS MODAL */}
+           {/* MANAGE ACCESS MODAL */}
             {isManagingUsers && (
-                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
-                    <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '8px', width: '100%', maxWidth: '500px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
+                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 999998, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: '80px', paddingLeft: '20px', paddingRight: '20px', paddingBottom: '20px' }}>
+                    <div style={{ backgroundColor: 'white', padding: isMobile ? '20px' : '30px', borderRadius: '8px', width: '100%', maxWidth: '500px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', boxSizing: 'border-box' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                             <h2 style={{ margin: 0, color: '#1e293b' }}>Workspace Access</h2>
                             <button onClick={() => setIsManagingUsers(false)} style={{ background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: '#94a3b8' }}>&times;</button>
                         </div>
 
                         {/* Invite Form */}
-                        <form onSubmit={handleInviteUser} style={{ display: 'flex', gap: '10px', marginBottom: '30px' }}>
+                        <form onSubmit={handleInviteUser} style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: '10px', marginBottom: '30px' }}>
                             <input 
                                 type="email" 
                                 placeholder="Enter user's WordPress email..." 
                                 value={inviteEmail}
                                 onChange={(e) => setInviteEmail(e.target.value)}
-                                style={{ flex: 1, padding: '10px', border: '1px solid #cbd5e1', borderRadius: '4px', outline: 'none' }}
+                                style={{ flex: 1, padding: '10px', border: '1px solid #cbd5e1', borderRadius: '4px', outline: 'none', boxSizing: 'border-box', width: '100%' }}
                                 required
                             />
-                            <button disabled={isInviting} style={{ backgroundColor: workspace.color, color: 'white', border: 'none', padding: '10px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                            <button disabled={isInviting} style={{ backgroundColor: workspace.color, color: 'white', border: 'none', padding: '10px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', width: isMobile ? '100%' : 'auto' }}>
                                 {isInviting ? 'Sending...' : 'Invite'}
                             </button>
                         </form>
@@ -385,7 +423,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
 			
 			{/* MOVE/COPY NOTE MODAL */}
             {actionNote && (
-                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
+                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 999998, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: '80px', paddingLeft: '20px', paddingRight: '20px', paddingBottom: '20px' }}>
                     <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '8px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
                         <h3 style={{ margin: '0 0 20px 0', color: '#1e293b', textTransform: 'capitalize' }}>
                             {actionNote.type} Note
@@ -436,22 +474,33 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 </button>
             </div>
             <div style={{ display: 'flex', gap: '10px' }}>
-				{/* NEW: Manage Users Button */}
-				<button 
-					style={{ backgroundColor: 'white', color: workspace.color, border: 'none', padding: isMobile ? '6px 10px' : '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMobile ? '12px' : '14px' }} 
-					onClick={() => setIsManagingUsers(true)}
-				>
-					⚙️ Manage Access
-				</button>
+                
+                {/* NEW: Install App Button (Only shows if device allows it AND it's not installed yet) */}
+                {installPrompt && (
+                    <button 
+                        style={{ backgroundColor: '#10b981', color: 'white', border: 'none', padding: isMobile ? '6px 10px' : '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMobile ? '12px' : '14px', boxShadow: '0 4px 6px -1px rgba(16, 185, 129, 0.4)' }} 
+                        onClick={handleInstallApp}
+                    >
+                        📱 Install App
+                    </button>
+                )}
 
-				{/* Existing Back Button */}
-				<button 
-					style={{ backgroundColor: headerTextColor === '#ffffff' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)', color: headerTextColor, border: 'none', padding: isMobile ? '6px 10px' : '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMobile ? '12px' : '14px' }} 
-					onClick={onBack}
-				>
-					&larr; {isMobile ? 'Back' : 'Switch Workspace'}
-				</button>
-			</div>
+                {/* Existing Manage Users Button */}
+                <button 
+                    style={{ backgroundColor: 'white', color: workspace.color, border: 'none', padding: isMobile ? '6px 10px' : '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMobile ? '12px' : '14px' }} 
+                    onClick={() => setIsManagingUsers(true)}
+                >
+                    ⚙️ Manage Access
+                </button>
+
+                {/* Existing Back Button */}
+                <button 
+                    style={{ backgroundColor: headerTextColor === '#ffffff' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.1)', color: headerTextColor, border: 'none', padding: isMobile ? '6px 10px' : '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMobile ? '12px' : '14px' }} 
+                    onClick={onBack}
+                >
+                    &larr; {isMobile ? 'Back' : 'Switch'}
+                </button>
+            </div>
             <div style={{ display: 'flex', gap: '20px', minHeight: '500px' }}>
                 
                 {/* SIDEBAR: FOLDERS */}
@@ -553,9 +602,48 @@ const WorkspaceView = ({ workspace, onBack }) => {
                         />
                     ) : (
                         !selectedFolder ? (
-                            <div style={{ textAlign: 'center', color: '#94a3b8', marginTop: '50px' }}>
-                                <span style={{ fontSize: '40px', display: 'block', marginBottom: '10px' }}>&#128194;</span>
-                                {isMobile ? "Tap the menu to select a folder." : "Select a folder to view its notes."}
+                            <div>
+                                <div style={{ textAlign: 'center', color: '#94a3b8', marginBottom: '30px', marginTop: '20px' }}>
+                                    <span style={{ fontSize: '40px', display: 'block', marginBottom: '10px' }}>&#128194;</span>
+                                    <h3 style={{ margin: 0, color: '#1e293b' }}>Select a Folder</h3>
+                                </div>
+                                
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '15px' }}>
+                                    {folders.map(folder => (
+                                        <div 
+                                            key={folder.id} 
+                                            onClick={() => { 
+                                                setSelectedFolder(folder); 
+                                                setActiveNoteId(null); 
+                                                setShowMobileSidebar(false); 
+                                            }}
+                                            style={{ 
+                                                backgroundColor: '#f8fafc', 
+                                                border: '1px solid #e2e8f0', 
+                                                borderRadius: '8px', 
+                                                padding: '20px 10px', 
+                                                textAlign: 'center', 
+                                                cursor: 'pointer',
+                                                boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                                            }}
+                                        >
+                                            <span style={{ fontSize: '32px', display: 'block', marginBottom: '10px' }}>📁</span>
+                                            <span style={{ fontWeight: 'bold', color: '#334155', fontSize: '14px', wordWrap: 'break-word' }}>{folder.title}</span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Show a helpful button if there are no folders yet */}
+                                {folders.length === 0 && (
+                                    <div style={{ textAlign: 'center', marginTop: '30px' }}>
+                                        <button 
+                                            onClick={() => isMobile ? setShowMobileSidebar(true) : setIsCreatingFolder(true)} 
+                                            style={{ backgroundColor: workspace.color, color: 'white', border: 'none', padding: '12px 24px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                                        >
+                                            + Create Your First Folder
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div>

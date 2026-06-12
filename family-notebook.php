@@ -77,9 +77,11 @@ function fn_enqueue_react_app() {
             $asset = require( $asset_file );
             wp_enqueue_script( 'family-notebook-app', FN_PLUGIN_URL . 'build/index.js', $asset['dependencies'], $asset['version'], true );
             wp_localize_script( 'family-notebook-app', 'fnAppConfig', [
-                'rootUrl' => esc_url_raw( rest_url() ),
-                'nonce'   => wp_create_nonce( 'wp_rest' ),
-                'siteUrl' => site_url(),
+                'rootUrl'   => esc_url_raw( rest_url() ),
+                'nonce'     => wp_create_nonce( 'wp_rest' ),
+                'siteUrl'   => site_url(),
+                // NEW: Pass the plugin directory URL to React
+                'pluginUrl' => FN_PLUGIN_URL, 
             ]);
         }
     }
@@ -604,21 +606,127 @@ function fn_process_pending_join_code($user_login, $user) {
         setcookie('fn_pending_join_code', '', time() - 3600, COOKIEPATH, COOKIE_DOMAIN);
     }
 }
+// ==========================================
+// PWA ENGINE: Manifest & Service Worker
+// ==========================================
+add_action('parse_request', 'fn_serve_pwa_assets');
+function fn_serve_pwa_assets() {
+    $request_uri = $_SERVER['REQUEST_URI'] ?? '';
+
+    // 1. Serve the Manifest
+    if (strpos($request_uri, 'fn-manifest.json') !== false) {
+        header('Content-Type: application/json');
+        
+        // Grab the exact URL where your app lives from your settings
+        $app_url = get_option('fn_app_login_url', site_url());
+        // Extract just the path (e.g., "/family-notebook/") to define the scope
+        $app_path = parse_url($app_url, PHP_URL_PATH);
+        if (!$app_path) $app_path = '/';
+
+        echo wp_json_encode([
+            "id" => "family-notebook-app-v1", // <-- NEW: Explicitly separates this from the Chore Chart
+            "name" => "Family Notebook",
+            "short_name" => "Notebook",
+            "start_url" => $app_url,          // <-- NEW: Forces the app to open on the correct page
+            "scope" => $app_path,             // <-- NEW: Restricts the PWA so it doesn't overlap with other apps
+            "display" => "standalone",
+            "background_color" => "#f1f5f9",
+            "theme_color" => "#0f172a",
+            "icons" => [
+                [
+                    "src" => FN_PLUGIN_URL . "assets/icon-192.png", 
+                    "sizes" => "192x192",
+                    "type" => "image/png"
+                ],
+                [
+                    "src" => FN_PLUGIN_URL . "assets/icon-512.png", 
+                    "sizes" => "512x512",
+                    "type" => "image/png"
+                ]
+            ]
+        ]);
+        exit;
+    }
+
+    // 2. Serve the Service Worker
+    if (strpos($request_uri, 'fn-sw.js') !== false) {
+        header('Content-Type: application/javascript');
+        // Critical: Allows the SW to control the WordPress page even if served from a weird path
+        header('Service-Worker-Allowed: /'); 
+        echo "
+            self.addEventListener('install', (e) => { self.skipWaiting(); });
+            self.addEventListener('activate', (e) => { e.waitUntil(clients.claim()); });
+            self.addEventListener('fetch', (e) => { 
+                // Basic pass-through fetch. Advanced offline caching can be added here later.
+            });
+        ";
+        exit;
+    }
+}
 // 8. Auth Gate & Shortcode
 add_shortcode( 'family_notebook_app', 'fn_render_app_shortcode' );
 function fn_render_app_shortcode() {
+    
+    // NATIVE APP CSS: This ONLY activates when opened via the Home Screen Icon
+    $standalone_css = '
+    <style>
+        /* Hidden by default on the standard website */
+        .fn-native-app-header { display: none; }
+
+        @media (display-mode: standalone) {
+            /* 1. Hide Divi and default WordPress headers/footers */
+            header, footer, #main-header, #top-header, #main-footer, 
+            .et-l-header, .et-l-footer, .site-header, .site-footer {
+                display: none !important;
+            }
+            
+            /* 2. Nuke theme spacing so the app is flush to the phone edges */
+            html, body, #page-container, #et-main-area, #main-content, 
+            .et_pb_section, .et_pb_row, .et_pb_column, .entry-content {
+                padding: 0 !important;
+                margin: 0 !important;
+                max-width: 100% !important;
+                width: 100% !important;
+                background-color: #f1f5f9 !important; /* Matches your app background */
+            }
+
+            /* 3. Show our custom App Header specifically for the installed PWA */
+            .fn-native-app-header {
+                display: flex !important;
+                align-items: center;
+                justify-content: center;
+                background-color: #0f172a; /* Slate 900 to match your app theme */
+                color: #ffffff;
+                padding: 15px 20px;
+                /* Push the title down slightly so it avoids the iPhone Notch / Camera Cutout */
+                padding-top: max(15px, env(safe-area-inset-top)); 
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                position: sticky;
+                top: 0;
+                z-index: 999999;
+            }
+            .fn-native-app-header h1 {
+                margin: 0 !important;
+                font-size: 20px !important;
+                font-weight: bold !important;
+                color: #ffffff !important;
+                letter-spacing: 0.5px;
+                padding: 0 !important;
+                line-height: 1 !important;
+            }
+        }
+    </style>';
+
     if ( ! is_user_logged_in() ) {
         ob_start();
+        echo $standalone_css; // Inject CSS into the login screen too
         ?>
         <div style="max-width: 400px; margin: 40px auto; padding: 30px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); font-family: sans-serif;">
             <h2 style="text-align: center; color: #1e293b; margin-top: 0; margin-bottom: 25px;">Family Notebook</h2>
             
             <?php 
-            // 1. Explicitly render the Google Login button only once
             if ( shortcode_exists( 'nextend_social_login' ) ) {
                 echo '<div style="display: flex; justify-content: center; margin-bottom: 25px;">' . do_shortcode( '[nextend_social_login provider="google"]' ) . '</div>';
-                
-                // Add a modern visual separator
                 echo '<div style="display: flex; align-items: center; text-align: center; color: #94a3b8; font-size: 14px; margin-bottom: 20px;">
                         <div style="flex: 1; border-bottom: 1px solid #e2e8f0;"></div>
                         <span style="padding: 0 10px;">or login with email</span>
@@ -651,7 +759,14 @@ function fn_render_app_shortcode() {
         <?php
         return ob_get_clean();
     }
-    return '<div id="family-notebook-root">Loading...</div>';
+    
+    // Inject CSS and the Custom App Header into the main app experience
+    return $standalone_css . '
+        <div class="fn-native-app-header">
+            <h1>Family Notebook</h1>
+        </div>
+        <div id="family-notebook-root">Loading...</div>
+    ';
 }
 
 register_activation_hook( __FILE__, 'fn_create_custom_tables' );
