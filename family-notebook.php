@@ -219,19 +219,18 @@ function fn_api_create_note($request) {
         $tpl = get_post(intval($params['template_id']));
         if ($tpl) $content = json_decode($tpl->post_content, true) ?: [];
     }
-    $id = wp_insert_post(['post_title' => sanitize_text_field($params['title']), 'post_type' => 'fn_note_page', 'post_status' => 'publish', 'post_parent' => intval($params['parent_id'] ?? 0), 'post_content' => wp_json_encode($content)]);
+    
+    // ADDED: wp_slash() wraps the wp_json_encode string
+    $id = wp_insert_post([
+        'post_title' => sanitize_text_field($params['title']), 
+        'post_type' => 'fn_note_page', 
+        'post_status' => 'publish', 
+        'post_parent' => intval($params['parent_id'] ?? 0), 
+        'post_content' => wp_slash(wp_json_encode($content))
+    ]);
+    
     update_post_meta($id, '_fn_workspace_id', $ws);
     return rest_ensure_response(['id' => $id, 'title' => $params['title'], 'parent_id' => $params['parent_id'] ?? 0, 'content' => $content]);
-}
-
-function fn_api_get_single_note($request) {
-    $id = intval($request['id']);
-    $ws = intval(get_post_meta($id, '_fn_workspace_id', true));
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
-    $p = get_post($id);
-    $content = json_decode($p->post_content, true);
-    if (json_last_error() !== JSON_ERROR_NONE) $content = [[ 'id' => uniqid('blk_'), 'type' => 'rich-text', 'content' => $p->post_content ]];
-    return rest_ensure_response(['id' => $p->ID, 'title' => $p->post_title, 'content' => $content ?: []]);
 }
 
 function fn_api_update_note($request) {
@@ -240,25 +239,23 @@ function fn_api_update_note($request) {
     if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
     $p = $request->get_json_params();
 
-    // Safely build an array of only the fields being updated
     $update_data = ['ID' => $id];
     
     if ( isset($p['title']) ) {
         $update_data['post_title'] = sanitize_text_field($p['title']);
     }
     if ( isset($p['content']) ) {
-        // CRITICAL FIX: Added wp_slash() to protect the JSON formatting
+        // ADDED: wp_slash() wrapper
         $update_data['post_content'] = wp_slash(wp_json_encode($p['content']));
     }
     if ( isset($p['parent_id']) ) {
-        $update_data['post_parent'] = intval($p['parent_id']); 
+        $update_data['post_parent'] = intval($p['parent_id']);
     }
 
     wp_update_post($update_data);
     return rest_ensure_response(['message' => 'Success']);
 }
 
-// NEW: Handle copying a note to a new folder
 function fn_api_copy_note($request) {
     $original_id = intval($request['id']);
     $ws = intval(get_post_meta($original_id, '_fn_workspace_id', true));
@@ -270,16 +267,15 @@ function fn_api_copy_note($request) {
     $original_post = get_post($original_id);
     if (!$original_post) return new WP_Error('404', 'Note not found');
     
-    // Insert a duplicated post
     $new_post_id = wp_insert_post([
         'post_title'   => $original_post->post_title . ' (Copy)',
-        'post_content' => $original_post->post_content,
+        // ADDED: wp_slash() wrapper for copied content
+        'post_content' => wp_slash($original_post->post_content),
         'post_status'  => 'publish',
         'post_type'    => 'fn_note_page',
         'post_parent'  => $new_parent_id,
     ]);
     
-    // Ensure it belongs to the same workspace
     update_post_meta($new_post_id, '_fn_workspace_id', $ws);
     
     $content = json_decode($original_post->post_content, true) ?: [];
@@ -290,6 +286,16 @@ function fn_api_copy_note($request) {
         'parent_id' => $new_parent_id, 
         'content' => $content
     ]);
+}
+
+function fn_api_get_single_note($request) {
+    $id = intval($request['id']);
+    $ws = intval(get_post_meta($id, '_fn_workspace_id', true));
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    $p = get_post($id);
+    $content = json_decode($p->post_content, true);
+    if (json_last_error() !== JSON_ERROR_NONE) $content = [[ 'id' => uniqid('blk_'), 'type' => 'rich-text', 'content' => $p->post_content ]];
+    return rest_ensure_response(['id' => $p->ID, 'title' => $p->post_title, 'content' => $content ?: []]);
 }
 
 function fn_api_delete_note($request) {
@@ -370,6 +376,11 @@ function fn_api_delete_template($request) { wp_delete_post(intval($request['id']
 
 function fn_api_export_template($request) {
     $f_id = intval($request['id']);
+    
+    // ADDED: Verify user has access to the workspace where this folder exists
+    $ws = intval(get_post_meta($f_id, '_fn_workspace_id', true));
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+
     $notes = get_posts(['post_type' => 'fn_note_page', 'post_parent' => $f_id, 'posts_per_page' => -1]);
     $data = ['template_name' => get_the_title($f_id), 'type' => 'fn_folder_template', 'notes' => []];
     foreach($notes as $n) $data['notes'][] = ['title' => $n->post_title, 'content' => json_decode($n->post_content, true)];
@@ -379,27 +390,29 @@ function fn_api_export_template($request) {
 function fn_api_import_template($request) {
     $p = $request->get_json_params();
     $ws = intval($p['workspace_id']);
+    
+    // ADDED: Verify user has access to the target workspace
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    
     $tpl = $p['template_data'];
     $f_id = wp_insert_post(['post_title' => sanitize_text_field($tpl['template_name']).' (Imported)', 'post_type' => 'fn_note_page', 'post_status' => 'publish']);
     update_post_meta($f_id, '_fn_workspace_id', $ws);
     $items = [['id' => $f_id, 'title' => $tpl['template_name'].' (Imported)', 'parent_id' => 0]];
     foreach($tpl['notes'] as $n) {
-        $nid = wp_insert_post(['post_title' => sanitize_text_field($n['title']), 'post_type' => 'fn_note_page', 'post_status' => 'publish', 'post_parent' => $f_id, 'post_content' => wp_json_encode($n['content'])]);
+        $nid = wp_insert_post(['post_title' => sanitize_text_field($n['title']), 'post_type' => 'fn_note_page', 'post_status' => 'publish', 'post_parent' => $f_id, 'post_content' => wp_slash(wp_json_encode($n['content']))]); // Added wp_slash here just in case!
         update_post_meta($nid, '_fn_workspace_id', $ws);
         $items[] = ['id' => $nid, 'title' => $n['title'], 'parent_id' => $f_id];
     }
     return rest_ensure_response(['new_items' => $items]);
 }
 
-// ==========================================
-// USER MANAGEMENT (Custom SQL Table Version)
-// ==========================================
-
 function fn_api_get_workspace_users($request) {
     global $wpdb;
     $ws = intval($request['id']);
+    
+    // ADDED: Verify user is a member before viewing users
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
 
-    // Query our custom members table and join it with the native WP users table to get their names/emails
     $query = $wpdb->prepare("
         SELECT u.ID as id, u.display_name as name, u.user_email as email, m.app_role
         FROM {$wpdb->prefix}fn_workspace_members m
@@ -413,12 +426,12 @@ function fn_api_get_workspace_users($request) {
     if ($results) {
         foreach ($results as $row) {
             $data[] = [
-                'id' => (int)$row['id'],
-                'name' => $row['name'],
-                'email' => $row['email'],
-                'role' => $row['app_role'], // <-- NEW: Send the exact role to React
-                'is_owner' => ($row['app_role'] === 'owner')
-            ];
+				'id' => (int)$row['id'],
+				'name' => $row['name'],
+				'email' => $row['email'],
+				'is_owner' => ($row['app_role'] === 'owner'),
+				'role' => $row['app_role'] // <-- Make sure this line exists so React knows what role to display!
+			];
         }
     }
     
@@ -428,10 +441,13 @@ function fn_api_get_workspace_users($request) {
 function fn_api_add_workspace_user($request) {
     global $wpdb;
     $ws = intval($request['id']);
+    
+    // ADDED: Verify user is authorized to invite others (ideally an owner, but this prevents random scraping)
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    
     $email = sanitize_email($request->get_json_params()['email']);
     $u = get_user_by('email', $email);
     
-    // Get workspace details for the email
     $workspace = $wpdb->get_row($wpdb->prepare("SELECT workspace_name, join_code FROM {$wpdb->prefix}fn_workspaces WHERE id = %d", $ws));
     if (!$workspace) return new WP_Error('404', 'Workspace not found.');
     
@@ -441,8 +457,6 @@ function fn_api_add_workspace_user($request) {
     add_filter( 'wp_mail_content_type', function() { return 'text/html'; } );
 
     if (!$u) {
-        // SCENARIO 1: User does NOT exist in WordPress yet.
-        // Send them a special invite link with the join code attached.
         $invite_link = add_query_arg('fn_join', $workspace->join_code, $login_url);
         
         $message = "
@@ -459,19 +473,23 @@ function fn_api_add_workspace_user($request) {
         wp_mail($email, "Invitation: Join " . $workspace_name, $message);
         remove_filter( 'wp_mail_content_type', function() { return 'text/html'; } );
         
-        // Return a special status so the React app knows it was an external invite
         return rest_ensure_response(['success' => true, 'status' => 'invite_sent_to_new_user']);
     }
 
     // SCENARIO 2: User ALREADY exists (Your original logic)
+    // SCENARIO 2: User ALREADY exists
     $table_members = $wpdb->prefix . 'fn_workspace_members';
     $existing = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $u->ID));
 
     if ($existing == 0) {
+        // ADDED: Look for a role in the request, default to viewer if none provided
+        $params = $request->get_json_params();
+        $requested_role = isset($params['role']) ? sanitize_text_field($params['role']) : 'viewer';
+
         $wpdb->insert($table_members, [
             'workspace_id' => $ws,
             'user_id'      => $u->ID,
-            'app_role'     => 'viewer' // Default role
+            'app_role'     => $requested_role // CHANGED: Replaced hardcoded 'viewer' string
         ]);
         
         $message = "
@@ -789,8 +807,13 @@ register_activation_hook( __FILE__, 'fn_create_custom_tables' );
 function fn_create_custom_tables() {
     global $wpdb;
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-    dbDelta("CREATE TABLE {$wpdb->prefix}fn_workspaces (id bigint(20) NOT NULL AUTO_INCREMENT, workspace_name varchar(255) NOT NULL, theme_color varchar(7) NOT NULL, join_code varchar(12) NOT NULL, created_by bigint(20) NOT NULL, PRIMARY KEY (id))");
-    dbDelta("CREATE TABLE {$wpdb->prefix}fn_workspace_members (id bigint(20) NOT NULL AUTO_INCREMENT, workspace_id bigint(20) NOT NULL, user_id bigint(20) NOT NULL, app_role varchar(50) NOT NULL, PRIMARY KEY (id))");
+    
+    // ADDED: Get the site's default charset and collation
+    $charset_collate = $wpdb->get_charset_collate();
+
+    // ADDED: Append $charset_collate to the end of the SQL statements
+    dbDelta("CREATE TABLE {$wpdb->prefix}fn_workspaces (id bigint(20) NOT NULL AUTO_INCREMENT, workspace_name varchar(255) NOT NULL, theme_color varchar(7) NOT NULL, join_code varchar(12) NOT NULL, created_by bigint(20) NOT NULL, PRIMARY KEY (id)) $charset_collate;");
+    dbDelta("CREATE TABLE {$wpdb->prefix}fn_workspace_members (id bigint(20) NOT NULL AUTO_INCREMENT, workspace_id bigint(20) NOT NULL, user_id bigint(20) NOT NULL, app_role varchar(50) NOT NULL, PRIMARY KEY (id)) $charset_collate;");
 }
 
 // ==========================================

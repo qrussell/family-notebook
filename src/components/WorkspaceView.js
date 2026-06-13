@@ -21,7 +21,7 @@ const getContrastTextColor = (hexColor) => {
 };
 
 const WorkspaceView = ({ workspace, onBack }) => {
-	console.log("Workspace Data received:", workspace);
+    console.log("Workspace Data received:", workspace);
     const [items, setItems] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     
@@ -31,54 +31,52 @@ const WorkspaceView = ({ workspace, onBack }) => {
     const [selectedFolder, setSelectedFolder] = useState(null);
     const [isCreatingNote, setIsCreatingNote] = useState(false);
     const [newNoteTitle, setNewNoteTitle] = useState('');
-	// Template Library State
+    
+    // Template Library State
     const [templates, setTemplates] = useState([]);
     const [selectedTemplateId, setSelectedTemplateId] = useState('');
     
-	// Editor State
+    // Editor State
     const [activeNoteId, setActiveNoteId] = useState(null);
-	// Move/Copy Note State
+    
+    // Move/Copy Note State
     // Format: { id: 123, type: 'move' | 'copy' }
     const [actionNote, setActionNote] = useState(null);
-	// Mobile Responsiveness State
+    
+    // Mobile Responsiveness State
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
     const [showMobileSidebar, setShowMobileSidebar] = useState(false);
-	// PWA Install State
+    
+    // PWA Install State
     const [installPrompt, setInstallPrompt] = useState(null);
-	// Import State
+    
+    // Import State
     const fileInputRef = useRef(null);
     const [isImporting, setIsImporting] = useState(false);
-	
-	// User Management State
+    
+    // User Management State
     const [isManagingUsers, setIsManagingUsers] = useState(false);
     const [workspaceUsers, setWorkspaceUsers] = useState([]);
     const [inviteEmail, setInviteEmail] = useState('');
     const [isInviting, setIsInviting] = useState(false);
     
-	// --- ROLE & PERMISSIONS LOGIC ---
+    // --- ROLE & PERMISSIONS LOGIC ---
     const role = workspace.role || 'viewer';
     const isOwner = role === 'owner';
     const canManageUsers = ['owner', 'organizer'].includes(role);
     const canEdit = ['owner', 'organizer', 'user'].includes(role);
-	
-	useEffect(() => {
+    
+    useEffect(() => {
         // Fetch Templates from the Library for this specific workspace (Includes Global)
         apiFetch({ path: `/family-notebook/v1/templates?workspace_id=${workspace.id}` })
             .then(data => setTemplates(data))
             .catch(err => console.error("Failed to load templates", err));
-    }, [workspace.id]); // Make sure to add workspace.id to the dependency array
+    }, [workspace.id]); 
     
     // Calculate the best text color for the current workspace header
     const headerTextColor = getContrastTextColor(workspace.color);
     
-	useEffect(() => {
-        // Fetch Templates from the Library
-        apiFetch({ path: '/family-notebook/v1/templates' })
-            .then(data => setTemplates(data))
-            .catch(err => console.error("Failed to load templates", err));
-    }, []);
-    
-	useEffect(() => {
+    useEffect(() => {
         setIsLoading(true);
         apiFetch({ path: `/family-notebook/v1/notes?workspace_id=${workspace.id}` })
             .then((data) => {
@@ -88,7 +86,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
             .catch(console.error);
     }, [workspace.id]);
 
-	// Fetch users when the modal opens
+    // Fetch users when the modal opens
     useEffect(() => {
         if (isManagingUsers) {
             apiFetch({ path: `/family-notebook/v1/workspaces/${workspace.id}/users` })
@@ -96,8 +94,8 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 .catch(err => console.error("Failed to load users", err));
         }
     }, [isManagingUsers, workspace.id]);
-	
-	useEffect(() => {
+    
+    useEffect(() => {
         // 1. Inject Manifest dynamically
         if (!document.querySelector('link[rel="manifest"]')) {
             const manifestLink = document.createElement('link');
@@ -147,6 +145,26 @@ const WorkspaceView = ({ workspace, onBack }) => {
         });
     };
 
+    // MERGED & CLEANED: Handles optimistic UI updates and backend saving
+    const handleUpdateUserRole = (userId, newRole) => {
+        // Optimistically update the UI instantly so it feels snappy (and toggles the "Owner" badge)
+        setWorkspaceUsers(workspaceUsers.map(user => 
+            user.id === userId ? { ...user, role: newRole, is_owner: newRole === 'owner' } : user
+        ));
+
+        // Send the save request to the WordPress backend
+        apiFetch({
+            path: `/family-notebook/v1/workspaces/${workspace.id}/users/${userId}`,
+            method: 'PUT',
+            data: { role: newRole }
+        }).catch((err) => {
+            alert(err.message || "Failed to update role. You might not have permission.");
+            // If it fails, refresh the list from the server to revert the visual change
+            apiFetch({ path: `/family-notebook/v1/workspaces/${workspace.id}/users` })
+                .then(setWorkspaceUsers);
+        });
+    };
+
     const handleRemoveUser = (userId, userName) => {
         if (!window.confirm(`Remove ${userName} from this workspace?`)) return;
 
@@ -159,22 +177,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
             alert(err.message || "Failed to remove user.");
         });
     };
-	
-	const handleRoleChange = (userId, newRole) => {
-        apiFetch({
-            path: `/family-notebook/v1/workspaces/${workspace.id}/users/${userId}`,
-            method: 'PUT',
-            data: { role: newRole }
-        }).then(() => {
-            // Update the local state instantly so the UI reflects the change
-            setWorkspaceUsers(workspaceUsers.map(u => 
-                u.id === userId ? { ...u, role: newRole, is_owner: newRole === 'owner' } : u
-            ));
-        }).catch((err) => {
-            alert(err.message || "Failed to update role.");
-        });
-    };
-	
+    
     // Handle Creating Both Folders AND Notes
     const handleCreateItem = (e, isFolder) => {
         e.preventDefault();
@@ -188,7 +191,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 title: title, 
                 workspace_id: workspace.id,
                 parent_id: isFolder ? 0 : selectedFolder.id,
-                template_id: !isFolder ? selectedTemplateId : '' // NEW: Pass the template ID
+                template_id: !isFolder ? selectedTemplateId : ''
             }
         }).then((newItem) => {
             setItems([...items, newItem]);
@@ -197,14 +200,14 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 setIsCreatingFolder(false);
             } else {
                 setNewNoteTitle('');
-                setSelectedTemplateId(''); // Reset selection
+                setSelectedTemplateId(''); 
                 setIsCreatingNote(false);
-                setActiveNoteId(newItem.id); // Instantly open the newly created note!
+                setActiveNoteId(newItem.id);
             }
         }).catch(console.error);
     };
     
-	// Execute Move or Copy
+    // Execute Move or Copy
     const submitNoteAction = (newFolderId) => {
         if (!newFolderId || !actionNote) return;
         
@@ -224,33 +227,30 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 method: 'POST',
                 data: { parent_id: newFolderId } 
             }).then((newNote) => {
-                setItems([...items, newNote]); // Add the duplicated note to local state
+                setItems([...items, newNote]);
                 setActionNote(null);
             }).catch(err => { console.error(err); alert("Failed to copy note."); });
         }
     };
     
-	// Trigger PWA Installation
+    // Trigger PWA Installation
     const handleInstallApp = async () => {
         if (!installPrompt) return;
-        // Show the browser's native installation prompt
         installPrompt.prompt();
-        // Wait for the user to respond
         const { outcome } = await installPrompt.userChoice;
         if (outcome === 'accepted') {
             console.log('App Installed');
-            setInstallPrompt(null); // Hide button after install
+            setInstallPrompt(null);
         }
     };
     
-	// 1. Delete a Folder
+    // 1. Delete a Folder
     const handleDeleteFolder = () => {
         if (!selectedFolder) return;
         if (!window.confirm(`Are you sure you want to delete the folder "${selectedFolder.title}" and ALL notes inside it?`)) return;
 
         apiFetch({ path: `/family-notebook/v1/notes/${selectedFolder.id}`, method: 'DELETE' })
             .then(() => {
-                // Forcing Number() casting guarantees the filter works
                 setItems(items.filter(item => Number(item.id) !== Number(selectedFolder.id) && Number(item.parent_id) !== Number(selectedFolder.id)));
                 setSelectedFolder(null);
             })
@@ -269,7 +269,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
         apiFetch({
             path: `/family-notebook/v1/notes/${selectedFolder.id}`,
             method: 'PUT',
-            data: { title: newTitle, content: [] } // Content is empty because it's just a folder
+            data: { title: newTitle, content: [] }
         }).then(() => {
             setItems(items.map(item => item.id === selectedFolder.id ? { ...item, title: newTitle } : item));
             setSelectedFolder({ ...selectedFolder, title: newTitle });
@@ -283,7 +283,6 @@ const WorkspaceView = ({ workspace, onBack }) => {
 
         apiFetch({ path: `/family-notebook/v1/notes/${noteId}`, method: 'DELETE' })
             .then(() => {
-                // Forcing Number() casting guarantees the filter works
                 setItems(items.filter(item => Number(item.id) !== Number(noteId)));
             })
             .catch((err) => {
@@ -292,30 +291,24 @@ const WorkspaceView = ({ workspace, onBack }) => {
             });
     };
     
-	// Handle Exporting a Folder as a JSON File
+    // Handle Exporting a Folder as a JSON File
     const handleExportFolder = () => {
         if (!selectedFolder) return;
         
         apiFetch({ path: `/family-notebook/v1/export/${selectedFolder.id}` })
             .then((exportData) => {
-                // Convert the JSON object into a formatted string
                 const jsonString = JSON.stringify(exportData, null, 2);
-                
-                // Create a temporary Blob and URL
                 const blob = new Blob([jsonString], { type: "application/json" });
                 const url = URL.createObjectURL(blob);
                 
-                // Create an invisible anchor tag to trigger the browser download
                 const link = document.createElement('a');
                 link.href = url;
-                // Clean the folder name for the file name (e.g. "Vacation Plans" -> "vacation_plans_template.json")
                 const safeName = selectedFolder.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
                 link.download = `${safeName}_template.json`;
                 
                 document.body.appendChild(link);
                 link.click();
                 
-                // Clean up
                 document.body.removeChild(link);
                 URL.revokeObjectURL(url);
             })
@@ -325,7 +318,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
             });
     };
     
-	// Handle Importing a JSON Template
+    // Handle Importing a JSON Template
     const handleFileChange = (event) => {
         const file = event.target.files[0];
         if (!file) return;
@@ -336,17 +329,13 @@ const WorkspaceView = ({ workspace, onBack }) => {
         reader.onload = (e) => {
             try {
                 const parsedJSON = JSON.parse(e.target.result);
-                
-                // Send the parsed JSON to our new PHP endpoint
                 apiFetch({
                     path: '/family-notebook/v1/import',
                     method: 'POST',
                     data: { workspace_id: workspace.id, template_data: parsedJSON }
                 }).then((response) => {
-                    // Instantly add the newly created folder and notes to our UI state
                     setItems([...items, ...response.new_items]);
                     setIsImporting(false);
-                    // Reset the file input so it can be used again
                     if (fileInputRef.current) fileInputRef.current.value = '';
                     alert("Template imported successfully!");
                 }).catch((error) => {
@@ -372,7 +361,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
     // Shared Styles
     const headerStyle = { 
         backgroundColor: workspace.color, 
-        color: headerTextColor, // Automatically selected based on brightness
+        color: headerTextColor,
         padding: '20px', 
         borderRadius: '8px', 
         display: 'flex', 
@@ -441,7 +430,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                     <div>
                                         <div style={{ fontWeight: 'bold', color: '#334155' }}>
                                             {user.name} 
-                                            {user.id === workspace.created_by && <span style={{ fontSize: '11px', backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '10px', marginLeft: '8px' }}>Creator</span>}
+                                            {user.is_owner && <span style={{ fontSize: '11px', backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '10px', marginLeft: '8px' }}>Owner</span>}
                                         </div>
                                         <div style={{ fontSize: '12px', color: '#64748b' }}>{user.email}</div>
                                     </div>
@@ -450,8 +439,8 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                         {/* Dropdown for role assignment (Only shown if you can manage users) */}
                                         {canManageUsers ? (
                                             <select 
-                                                value={user.role || 'viewer'} 
-                                                onChange={(e) => handleRoleChange(user.id, e.target.value)}
+                                                value={user.role || (user.is_owner ? 'owner' : 'viewer')} 
+                                                onChange={(e) => handleUpdateUserRole(user.id, e.target.value)}
                                                 style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', marginRight: '10px', outline: 'none', backgroundColor: '#f8fafc' }}
                                             >
                                                 <option value="owner">Owner</option>
@@ -476,8 +465,8 @@ const WorkspaceView = ({ workspace, onBack }) => {
                     </div>
                 </div>
             )}
-			
-			{/* MOVE/COPY NOTE MODAL */}
+            
+            {/* MOVE/COPY NOTE MODAL */}
             {actionNote && (
                 <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 999998, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: '80px', paddingLeft: '20px', paddingRight: '20px', paddingBottom: '20px' }}>
                     <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '8px', width: '100%', maxWidth: '400px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
@@ -506,9 +495,8 @@ const WorkspaceView = ({ workspace, onBack }) => {
                     </div>
                 </div>
             )}
-			
+            
             {/* HEADER */}
-            {/* UPDATED: Added className="fn-hide-print" */}
             <div style={headerStyle} className="fn-hide-print">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                     {/* HAMBURGER MENU (Only shows on Mobile) */}
@@ -625,7 +613,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                     onClick={() => { 
                                         setSelectedFolder(folder); 
                                         setActiveNoteId(null);
-                                        setShowMobileSidebar(false); // CRITICAL: Auto-close drawer when folder is tapped
+                                        setShowMobileSidebar(false); 
                                     }}
                                 >
                                     <span style={{ fontSize: '20px' }}>&#128193;</span> <span style={{ fontSize: '16px' }}>{folder.title}</span>
@@ -636,7 +624,6 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 </div>
 
                 {/* MAIN CANVAS: NOTES or EDITOR */}
-                {/* On mobile, this takes 100% width since the sidebar is now floating */}
                 <div style={{ flex: 1, backgroundColor: 'white', padding: isMobile ? '15px' : '30px', borderRadius: '8px', border: '1px solid #e2e8f0', minHeight: '500px', width: '100%' }}>
                     
                     {activeNoteId ? (
@@ -654,7 +641,6 @@ const WorkspaceView = ({ workspace, onBack }) => {
                             onNoteUpdated={(id, newTitle) => {
                                 setItems(items.map(item => item.id === id ? { ...item, title: newTitle } : item));
                             }}
-                            // Catch the new template and add it to the dropdown state
                             onTemplateSaved={(newTemplate) => {
                                 setTemplates([...templates, newTemplate]);
                             }}
