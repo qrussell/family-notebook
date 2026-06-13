@@ -29,7 +29,7 @@ Family Notebook is optimized for the modern family on the go. When installed as 
 
 ## 📥 Installation
 
-1. Download the latest release from the [Releases page](https://www.google.com/search?q=https://github.com/your-username/family-notebook/releases).
+1. Download the latest release from the [Releases page](https://www.google.com/search?q=https://github.com/qrussell/family-notebook/releases).
 2. Upload the `.zip` file via your WordPress Admin (**Plugins > Add New > Upload Plugin**).
 3. Activate the plugin.
 4. Create a new page and add the shortcode `[family_notebook_app]` to a Code or Text module.
