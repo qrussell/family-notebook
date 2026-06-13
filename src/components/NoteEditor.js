@@ -1,8 +1,9 @@
+import { __ } from '@wordpress/i18n';
 import { useState, useEffect } from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
 import { RichTextBlock, ChecklistBlock, ChoreChartBlock } from './Blocks';
 
-const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, onNoteCreated, onNoteUpdated, onTemplateSaved, canEdit }) => {
+const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, onNoteCreated, onNoteUpdated, onTemplateSaved }) => {
     const [title, setTitle] = useState('');
     const [tabs, setTabs] = useState([]);
     const [activeTabId, setActiveTabId] = useState(null);
@@ -19,11 +20,11 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                 let initialTabs = [];
                 
                 if (Array.isArray(loadedContent) && loadedContent.length > 0) {
-                    initialTabs = [{ id: `tab_${Date.now()}`, title: 'Page 1', blocks: loadedContent }];
+                    initialTabs = [{ id: `tab_${Date.now()}`, title: __('Page 1', 'family-notebook'), blocks: loadedContent }];
                 } else if (loadedContent && loadedContent.tabs) {
                     initialTabs = loadedContent.tabs;
                 } else {
-                    initialTabs = [{ id: `tab_${Date.now()}`, title: 'Page 1', blocks: [] }];
+                    initialTabs = [{ id: `tab_${Date.now()}`, title: __('Page 1', 'family-notebook'), blocks: [] }];
                 }
                 
                 setTabs(initialTabs);
@@ -36,24 +37,29 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
             .catch(console.error);
     }, [noteId]);
 
-    // --- REAL-TIME POLLING SYNC ---
+    // --- SMART POLLING SYNC ---
     useEffect(() => {
-        // 1. Only poll if we are NOT in Edit Mode
         if (isEditMode) return;
 
-        const syncInterval = setInterval(() => {
+        const fetchUpdates = () => {
+            if (document.visibilityState !== 'visible') return;
+
             apiFetch({ path: `/family-notebook/v1/notes/${noteId}` })
                 .then((data) => {
-                    // 2. Only update if the content has changed 
-                    // This prevents React from re-rendering the whole page for no reason
                     if (data.content && data.content.tabs && JSON.stringify(data.content.tabs) !== JSON.stringify(tabs)) {
                         setTabs(data.content.tabs);
                     }
                 })
                 .catch(err => console.error("Sync failed:", err));
-        }, 5000); // 5-second interval
+        };
 
-        return () => clearInterval(syncInterval);
+        const syncInterval = setInterval(fetchUpdates, 15000); 
+        document.addEventListener("visibilitychange", fetchUpdates);
+
+        return () => {
+            clearInterval(syncInterval);
+            document.removeEventListener("visibilitychange", fetchUpdates);
+        };
     }, [noteId, isEditMode, tabs]);
 
     const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
@@ -81,7 +87,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
     };
     
     const handleSaveToLibrary = () => {
-        const templateName = window.prompt("Name this template for the library:", title);
+        const templateName = window.prompt(__('Name this template for the library:', 'family-notebook'), title);
         if (!templateName) return;
 
         apiFetch({
@@ -90,20 +96,20 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
             data: { 
                 title: templateName, 
                 content: { tabs: tabs },
-                workspace_id: workspaceId // <-- Passes the workspace scope to the backend
+                workspace_id: workspaceId
             } 
         }).then((response) => {
-            alert("Layout saved to your Template Library!");
+            alert(__('Layout saved to your Template Library!', 'family-notebook'));
             if (onTemplateSaved) onTemplateSaved({ id: response.id, title: templateName });
         }).catch((err) => {
             console.error(err);
-            alert("Failed to save template.");
+            alert(__('Failed to save template.', 'family-notebook'));
         });
     };
 
     // --- TAB MANAGEMENT FUNCTIONS ---
     const handleAddTab = () => {
-        const newTab = { id: `tab_${Date.now()}`, title: `Page ${tabs.length + 1}`, blocks: [] };
+        const newTab = { id: `tab_${Date.now()}`, title: `${__('Page', 'family-notebook')} ${tabs.length + 1}`, blocks: [] };
         const updatedTabs = [...tabs, newTab];
         setTabs(updatedTabs);
         setActiveTabId(newTab.id);
@@ -133,7 +139,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
         
         const newTab = {
             id: `tab_${Date.now()}`,
-            title: `${tabToCopy.title} (Copy)`,
+            title: `${tabToCopy.title} ${__('(Copy)', 'family-notebook')}`,
             blocks: clonedBlocks
         };
 
@@ -149,8 +155,8 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
     
     const handleDeleteTab = (tabId, e) => {
         e.stopPropagation();
-        if (tabs.length === 1) return alert("You must have at least one page.");
-        if (!window.confirm("Delete this entire page and all its blocks?")) return;
+        if (tabs.length === 1) return alert(__('You must have at least one page.', 'family-notebook'));
+        if (!window.confirm(__('Delete this entire page and all its blocks?', 'family-notebook'))) return;
         
         const remainingTabs = tabs.filter(t => t.id !== tabId);
         setTabs(remainingTabs);
@@ -161,26 +167,21 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
     const handleMoveTab = (tabId, direction, e) => {
         e.stopPropagation();
         
-        // Find the current position of the tab
         const currentIndex = tabs.findIndex(t => t.id === tabId);
         if (currentIndex === -1) return;
 
         const newTabs = [...tabs];
 
-        // Swap with the previous tab
         if (direction === 'left' && currentIndex > 0) {
             [newTabs[currentIndex - 1], newTabs[currentIndex]] = [newTabs[currentIndex], newTabs[currentIndex - 1]];
-        } 
-        // Swap with the next tab
-        else if (direction === 'right' && currentIndex < newTabs.length - 1) {
+        } else if (direction === 'right' && currentIndex < newTabs.length - 1) {
             [newTabs[currentIndex + 1], newTabs[currentIndex]] = [newTabs[currentIndex], newTabs[currentIndex + 1]];
-        } 
-        else {
-            return; // No change needed
+        } else {
+            return; 
         }
 
         setTabs(newTabs);
-        if (!isEditMode) silentAutoSave(newTabs); // Save automatically if we aren't in layout mode
+        if (!isEditMode) silentAutoSave(newTabs); 
     };
     
     // --- BLOCK MANAGEMENT ---
@@ -236,7 +237,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
         }, []).filter(cat => cat && cat.trim() !== '')
     )].sort();
 
-    if (isLoading) return <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>Loading note...</div>;
+    if (isLoading) return <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>{__('Loading note...', 'family-notebook')}</div>;
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -253,7 +254,6 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
 
                 /* NATIVE APP MOBILE EDGE-TO-EDGE OVERRIDE */
                 @media (max-width: 768px) {
-                    /* 1. Nuke all WordPress/Divi margins and paddings */
                     html, body, #page-container, #et-main-area, #main-content, 
                     .et_pb_section, .et_pb_row, .et_pb_column, .et_pb_module, 
                     #family-notebook-root {
@@ -264,8 +264,6 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                         margin-left: 0 !important;
                         margin-right: 0 !important;
                     }
-
-                    /* 2. Make the Tab Bar perfectly flush with the edges */
                     .fn-tab-bar { 
                         border-radius: 0 !important; 
                         padding-left: 5px !important; 
@@ -273,14 +271,10 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                         border-left: none !important;
                         border-right: none !important;
                     }
-
-                    /* 3. Give text 15px of breathing room from the physical glass */
                     .fn-print-zone, .fn-action-bar { 
                         padding-left: 15px !important; 
                         padding-right: 15px !important; 
                     }
-                    
-                    /* 4. Shrink title fonts to save space */
                     .fn-print-zone h2, .fn-print-zone input[placeholder="Untitled Note"] { 
                         font-size: 24px !important; 
                     }
@@ -288,17 +282,15 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
             `}</style>
 
             <div className="fn-hide-print fn-action-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '15px', borderBottom: '2px solid #f1f5f9' }}>
-                <button onClick={onClose} style={{ background: 'transparent', border: '1px solid #cbd5e1', color: '#475569', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>&larr; Back</button>
+                <button onClick={onClose} style={{ background: 'transparent', border: '1px solid #cbd5e1', color: '#475569', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>&larr; {__('Back', 'family-notebook')}</button>
                 <div style={{ display: 'flex', gap: '10px' }}>
-                    {!isEditMode && <button onClick={() => window.print()} style={{ backgroundColor: 'white', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>🖨️ Print</button>}
-                    
-                    {/* Hide Edit Layout for Viewers */}
+                    {!isEditMode && <button onClick={() => window.print()} style={{ backgroundColor: 'white', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>🖨️ {__('Print', 'family-notebook')}</button>}
                     {!isEditMode ? (
-                        canEdit && <button onClick={() => setIsEditMode(true)} style={{ backgroundColor: 'white', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>✏️ Edit Layout</button>
+                        <button onClick={() => setIsEditMode(true)} style={{ backgroundColor: 'white', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>✏️ {__('Edit Layout', 'family-notebook')}</button>
                     ) : (
                         <div style={{ display: 'flex', gap: '10px' }}>
-                            <button onClick={handleSaveToLibrary} style={{ backgroundColor: 'white', color: workspaceColor, border: `1px solid ${workspaceColor}`, padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>💾 Save to Library</button>
-                            <button onClick={handleSave} disabled={isSaving} style={{ backgroundColor: workspaceColor, color: 'white', border: 'none', padding: '8px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{isSaving ? 'Saving...' : 'Save Changes'}</button>
+                            <button onClick={handleSaveToLibrary} style={{ backgroundColor: 'white', color: workspaceColor, border: `1px solid ${workspaceColor}`, padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>💾 {__('Save to Library', 'family-notebook')}</button>
+                            <button onClick={handleSave} disabled={isSaving} style={{ backgroundColor: workspaceColor, color: 'white', border: 'none', padding: '8px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{isSaving ? __('Saving...', 'family-notebook') : __('Save Changes', 'family-notebook')}</button>
                         </div>
                     )}
                 </div>
@@ -306,7 +298,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
 
             <div className="fn-print-zone">
                 {isEditMode ? (
-                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Untitled Note" style={{ fontSize: '28px', fontWeight: 'bold', border: 'none', paddingBottom: '10px', marginBottom: '20px', width: '100%', outline: 'none', color: '#0f172a', borderBottom: '1px dashed #cbd5e1' }} />
+                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={__("Untitled Note", 'family-notebook')} style={{ fontSize: '28px', fontWeight: 'bold', border: 'none', paddingBottom: '10px', marginBottom: '20px', width: '100%', outline: 'none', color: '#0f172a', borderBottom: '1px dashed #cbd5e1' }} />
                 ) : (
                     <h2 style={{ fontSize: '28px', margin: '0 0 20px 0', color: '#0f172a' }}>{title}</h2>
                 )}
@@ -314,41 +306,26 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                 <div className="fn-hide-print fn-tab-bar" style={{ display: 'flex', borderBottom: '2px solid #e2e8f0', marginBottom: '20px', overflowX: 'auto', backgroundColor: '#f8fafc', borderRadius: '8px 8px 0 0' }}>
                     {tabs.map((tab, index) => (
                         <div key={tab.id} onClick={() => setActiveTabId(tab.id)} style={{ padding: '12px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: activeTabId === tab.id ? 'white' : 'transparent', borderTop: activeTabId === tab.id ? `3px solid ${workspaceColor}` : '3px solid transparent', borderRight: '1px solid #e2e8f0', fontWeight: activeTabId === tab.id ? 'bold' : 'normal', color: activeTabId === tab.id ? '#0f172a' : '#64748b' }}>
+                            <input 
+                                value={tab.title} 
+                                onChange={(e) => handleRenameTab(tab.id, e.target.value)} 
+                                onBlur={() => { if (!isEditMode) silentAutoSave(tabs); }}
+                                onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                                style={{ border: 'none', background: 'transparent', outline: 'none', width: `${Math.max(tab.title.length, 6)}ch`, color: 'inherit', fontWeight: 'inherit', fontSize: '14px' }} 
+                            />
                             
-                            {/* Restricted Tab Renaming */}
-                            {canEdit ? (
-                                <input 
-                                    value={tab.title} 
-                                    onChange={(e) => handleRenameTab(tab.id, e.target.value)} 
-                                    onBlur={() => { if (!isEditMode) silentAutoSave(tabs); }}
-                                    onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                                    style={{ border: 'none', background: 'transparent', outline: 'none', width: `${Math.max(tab.title.length, 6)}ch`, color: 'inherit', fontWeight: 'inherit', fontSize: '14px' }} 
-                                />
-                            ) : (
-                                <span style={{ fontSize: '14px' }}>{tab.title}</span>
+                            {activeTabId === tab.id && index > 0 && (
+                                <button onClick={(e) => handleMoveTab(tab.id, 'left', e)} title={__("Move Left", 'family-notebook')} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 2px', fontSize: '16px' }}>&larr;</button>
                             )}
-                            
-                            {/* Wrap all tab actions in canEdit */}
-                            {canEdit && (
-                                <>
-                                    {activeTabId === tab.id && index > 0 && (
-                                        <button onClick={(e) => handleMoveTab(tab.id, 'left', e)} title="Move Left" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 2px', fontSize: '16px' }}>&larr;</button>
-                                    )}
-                                    {activeTabId === tab.id && index < tabs.length - 1 && (
-                                        <button onClick={(e) => handleMoveTab(tab.id, 'right', e)} title="Move Right" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 2px', fontSize: '16px' }}>&rarr;</button>
-                                    )}
+                            {activeTabId === tab.id && index < tabs.length - 1 && (
+                                <button onClick={(e) => handleMoveTab(tab.id, 'right', e)} title={__("Move Right", 'family-notebook')} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 2px', fontSize: '16px' }}>&rarr;</button>
+                            )}
 
-                                    <button onClick={(e) => handleDuplicateTab(tab.id, e)} title="Duplicate Page" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 4px', fontSize: '16px' }}>⎘</button>
-                                    {tabs.length > 1 && <button onClick={(e) => handleDeleteTab(tab.id, e)} title="Delete Page" style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', padding: '0 4px', fontSize: '16px' }}>&times;</button>}
-                                </>
-                            )}
+                            <button onClick={(e) => handleDuplicateTab(tab.id, e)} title={__("Duplicate Page", 'family-notebook')} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 4px', fontSize: '16px' }}>⎘</button>
+                            {tabs.length > 1 && <button onClick={(e) => handleDeleteTab(tab.id, e)} title={__("Delete Page", 'family-notebook')} style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', padding: '0 4px', fontSize: '16px' }}>&times;</button>}
                         </div>
                     ))}
-                    
-                    {/* Restricted Add Page Button */}
-                    {canEdit && (
-                        <button onClick={handleAddTab} style={{ background: 'none', border: 'none', color: workspaceColor, cursor: 'pointer', padding: '0 20px', fontWeight: 'bold', fontSize: '14px' }}>+ Add Page</button>
-                    )}
+                    <button onClick={handleAddTab} style={{ background: 'none', border: 'none', color: workspaceColor, cursor: 'pointer', padding: '0 20px', fontWeight: 'bold', fontSize: '14px' }}>+ {__('Add Page', 'family-notebook')}</button>
                 </div>
                 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '40px' }}>
@@ -374,9 +351,9 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                                         zIndex: 10 
                                     }}
                                 >
-                                    <button onClick={() => moveBlock(index, 'up')} disabled={index === 0} style={{ background: 'transparent', border: 'none', borderRight: '1px solid #e2e8f0', padding: '4px 10px', cursor: index === 0 ? 'not-allowed' : 'pointer', opacity: index === 0 ? 0.3 : 1, color: '#64748b' }} title="Move Up">↑</button>
-                                    <button onClick={() => moveBlock(index, 'down')} disabled={index === activeBlocks.length - 1} style={{ background: 'transparent', border: 'none', borderRight: '1px solid #e2e8f0', padding: '4px 10px', cursor: index === activeBlocks.length - 1 ? 'not-allowed' : 'pointer', opacity: index === activeBlocks.length - 1 ? 0.3 : 1, color: '#64748b' }} title="Move Down">↓</button>
-                                    <button onClick={() => removeBlock(block.id)} style={{ background: 'transparent', border: 'none', padding: '4px 10px', cursor: 'pointer', color: '#ef4444', fontWeight: 'bold' }} title="Delete Block">&times;</button>
+                                    <button onClick={() => moveBlock(index, 'up')} disabled={index === 0} style={{ background: 'transparent', border: 'none', borderRight: '1px solid #e2e8f0', padding: '4px 10px', cursor: index === 0 ? 'not-allowed' : 'pointer', opacity: index === 0 ? 0.3 : 1, color: '#64748b' }} title={__("Move Up", 'family-notebook')}>↑</button>
+                                    <button onClick={() => moveBlock(index, 'down')} disabled={index === activeBlocks.length - 1} style={{ background: 'transparent', border: 'none', borderRight: '1px solid #e2e8f0', padding: '4px 10px', cursor: index === activeBlocks.length - 1 ? 'not-allowed' : 'pointer', opacity: index === activeBlocks.length - 1 ? 0.3 : 1, color: '#64748b' }} title={__("Move Down", 'family-notebook')}>↓</button>
+                                    <button onClick={() => removeBlock(block.id)} style={{ background: 'transparent', border: 'none', padding: '4px 10px', cursor: 'pointer', color: '#ef4444', fontWeight: 'bold' }} title={__("Delete Block", 'family-notebook')}>&times;</button>
                                 </div>
                             )}
                         </div>
@@ -386,10 +363,10 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
 
             {isEditMode && (
                 <div className="fn-hide-print" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', padding: '15px', backgroundColor: '#f1f5f9', borderRadius: '8px', justifyContent: 'center', alignItems: 'center' }}>
-                    <span style={{ color: '#64748b', fontWeight: 'bold', width: '100%', textAlign: 'center', marginBottom: '5px' }}>Add Block:</span>
-                    <button onClick={() => addBlock('rich-text')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>📝 Text</button>
-                    <button onClick={() => addBlock('checklist')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>✅ Checklist</button>
-                    <button onClick={() => addBlock('chore-chart')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>💰 Chore Chart</button>
+                    <span style={{ color: '#64748b', fontWeight: 'bold', width: '100%', textAlign: 'center', marginBottom: '5px' }}>{__('Add Block:', 'family-notebook')}</span>
+                    <button onClick={() => addBlock('rich-text')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>📝 {__('Text', 'family-notebook')}</button>
+                    <button onClick={() => addBlock('checklist')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>✅ {__('Checklist', 'family-notebook')}</button>
+                    <button onClick={() => addBlock('chore-chart')} style={{ flex: '1 1 auto', minWidth: '120px', backgroundColor: 'white', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>💰 {__('Chore Chart', 'family-notebook')}</button>
                 </div>
             )}
         </div>

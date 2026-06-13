@@ -1,10 +1,10 @@
+import { __ } from '@wordpress/i18n';
 import { useState } from '@wordpress/element';
 
 const WorkspaceList = ({ workspaces, onSelect, onCreateWorkspace }) => {
-    // Local state to manage the creation form
     const [isCreating, setIsCreating] = useState(false);
     const [newName, setNewName] = useState('');
-    const [newColor, setNewColor] = useState('#0284c7'); // Default theme blue
+    const [newColor, setNewColor] = useState('#0284c7');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleSubmit = (e) => {
@@ -12,7 +12,6 @@ const WorkspaceList = ({ workspaces, onSelect, onCreateWorkspace }) => {
         if (!newName.trim()) return;
         
         setIsSubmitting(true);
-        // Call the parent function to save it, then reset the form
         onCreateWorkspace(newName, newColor).then(() => {
             setIsSubmitting(false);
             setIsCreating(false);
@@ -48,11 +47,10 @@ const WorkspaceList = ({ workspaces, onSelect, onCreateWorkspace }) => {
     return (
         <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                <h2 style={{ color: '#475569', fontSize: '16px', margin: 0 }}>Your Workspaces</h2>
+                <h2 style={{ color: '#475569', fontSize: '16px', margin: 0 }}>{__('Your Workspaces', 'family-notebook')}</h2>
             </div>
 
             <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-                {/* Render Existing Workspaces */}
                 {workspaces && workspaces.map((workspace) => (
                     <div 
                         key={workspace.id} 
@@ -63,32 +61,30 @@ const WorkspaceList = ({ workspaces, onSelect, onCreateWorkspace }) => {
                     </div>
                 ))}
 
-                {/* The "Create New" Button Tile */}
                 {!isCreating && (
                     <div style={newTileStyle} onClick={() => setIsCreating(true)}>
-                        + New Workspace
+                        + {__('New Workspace', 'family-notebook')}
                     </div>
                 )}
             </div>
 
-            {/* The Creation Form */}
             {isCreating && (
                 <div style={{ marginTop: '20px', padding: '20px', backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', maxWidth: '400px' }}>
-                    <h3 style={{ marginTop: 0, fontSize: '16px' }}>Create New Workspace</h3>
+                    <h3 style={{ marginTop: 0, fontSize: '16px' }}>{__('Create New Workspace', 'family-notebook')}</h3>
                     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                         <div>
-                            <label style={{ display: 'block', fontSize: '14px', marginBottom: '5px' }}>Workspace Name</label>
+                            <label style={{ display: 'block', fontSize: '14px', marginBottom: '5px' }}>{__('Workspace Name', 'family-notebook')}</label>
                             <input 
                                 type="text" 
                                 value={newName} 
                                 onChange={(e) => setNewName(e.target.value)} 
-                                placeholder="e.g. The Smith Family"
+                                placeholder={__("e.g. The Smith Family", 'family-notebook')}
                                 style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
                                 required
                             />
                         </div>
                         <div>
-                            <label style={{ display: 'block', fontSize: '14px', marginBottom: '5px' }}>Theme Color</label>
+                            <label style={{ display: 'block', fontSize: '14px', marginBottom: '5px' }}>{__('Theme Color', 'family-notebook')}</label>
                             <input 
                                 type="color" 
                                 value={newColor} 
@@ -102,14 +98,14 @@ const WorkspaceList = ({ workspaces, onSelect, onCreateWorkspace }) => {
                                 disabled={isSubmitting}
                                 style={{ backgroundColor: '#0284c7', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}
                             >
-                                {isSubmitting ? 'Saving...' : 'Create Workspace'}
+                                {isSubmitting ? __('Saving...', 'family-notebook') : __('Create Workspace', 'family-notebook')}
                             </button>
                             <button 
                                 type="button" 
                                 onClick={() => setIsCreating(false)}
                                 style={{ backgroundColor: '#f1f5f9', color: '#475569', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}
                             >
-                                Cancel
+                                {__('Cancel', 'family-notebook')}
                             </button>
                         </div>
                     </form>

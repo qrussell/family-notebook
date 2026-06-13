@@ -4,6 +4,8 @@
  * Description: A decoupled React SPA for family note-taking and organization.
  * Version: 1.0.0
  * Author: Cielocloud.org
+ * Text Domain: family-notebook
+ * Domain Path: /languages
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -30,8 +32,8 @@ add_action( 'init', 'fn_register_cpts' );
 function fn_register_cpts() {
     register_post_type( 'fn_note_page', [
         'labels'      => [
-            'name'          => 'Note Pages',
-            'singular_name' => 'Note Page',
+            'name'          => __('Note Pages', 'family-notebook'),
+            'singular_name' => __('Note Page', 'family-notebook'),
         ],
         'public'      => true,
         'has_archive' => false,
@@ -42,7 +44,7 @@ function fn_register_cpts() {
     register_post_type( 'fn_template', [
         'public'      => false,
         'show_ui'     => true,
-        'label'       => 'Templates',
+        'label'       => __('Templates', 'family-notebook'),
         'supports'    => [ 'title', 'editor' ]
     ]);
 }
@@ -76,6 +78,7 @@ function fn_enqueue_react_app() {
         if ( file_exists( $script_path ) && file_exists( $asset_file ) ) {
             $asset = require( $asset_file );
             wp_enqueue_script( 'family-notebook-app', FN_PLUGIN_URL . 'build/index.js', $asset['dependencies'], $asset['version'], true );
+            wp_set_script_translations( 'family-notebook-app', 'family-notebook', FN_PLUGIN_DIR . 'languages' );
             wp_localize_script( 'family-notebook-app', 'fnAppConfig', [
                 'rootUrl'   => esc_url_raw( rest_url() ),
                 'nonce'     => wp_create_nonce( 'wp_rest' ),
@@ -203,7 +206,7 @@ function fn_api_create_workspace($request) {
 
 function fn_api_get_notes($request) {
     $ws = intval($request->get_param('workspace_id'));
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     $query = new WP_Query(['post_type' => 'fn_note_page', 'posts_per_page' => -1, 'post_status' => 'publish', 'meta_query' => [['key' => '_fn_workspace_id', 'value' => $ws]]]);
     $items = [];
     foreach($query->posts as $p) $items[] = ['id' => $p->ID, 'title' => $p->post_title, 'parent_id' => $p->post_parent];
@@ -213,7 +216,7 @@ function fn_api_get_notes($request) {
 function fn_api_create_note($request) {
     $params = $request->get_json_params();
     $ws = intval($params['workspace_id']);
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     $content = [];
     if (!empty($params['template_id'])) {
         $tpl = get_post(intval($params['template_id']));
@@ -236,7 +239,7 @@ function fn_api_create_note($request) {
 function fn_api_update_note($request) {
     $id = intval($request['id']);
     $ws = intval(get_post_meta($id, '_fn_workspace_id', true));
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     $p = $request->get_json_params();
 
     $update_data = ['ID' => $id];
@@ -253,22 +256,22 @@ function fn_api_update_note($request) {
     }
 
     wp_update_post($update_data);
-    return rest_ensure_response(['message' => 'Success']);
+    return rest_ensure_response(['message' => __('Success', 'family-notebook')]);
 }
 
 function fn_api_copy_note($request) {
     $original_id = intval($request['id']);
     $ws = intval(get_post_meta($original_id, '_fn_workspace_id', true));
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     
     $p = $request->get_json_params();
     $new_parent_id = isset($p['parent_id']) ? intval($p['parent_id']) : 0;
     
     $original_post = get_post($original_id);
-    if (!$original_post) return new WP_Error('404', 'Note not found');
+    if (!$original_post) return new WP_Error('404', __('Note not found', 'family-notebook'));
     
     $new_post_id = wp_insert_post([
-        'post_title'   => $original_post->post_title . ' (Copy)',
+        'post_title'   => $original_post->post_title . ' ' . __('(Copy)', 'family-notebook'),
         // ADDED: wp_slash() wrapper for copied content
         'post_content' => wp_slash($original_post->post_content),
         'post_status'  => 'publish',
@@ -282,7 +285,7 @@ function fn_api_copy_note($request) {
     
     return rest_ensure_response([
         'id' => $new_post_id, 
-        'title' => $original_post->post_title . ' (Copy)', 
+        'title' => $original_post->post_title . ' ' . __('(Copy)', 'family-notebook'), 
         'parent_id' => $new_parent_id, 
         'content' => $content
     ]);
@@ -291,7 +294,7 @@ function fn_api_copy_note($request) {
 function fn_api_get_single_note($request) {
     $id = intval($request['id']);
     $ws = intval(get_post_meta($id, '_fn_workspace_id', true));
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     $p = get_post($id);
     $content = json_decode($p->post_content, true);
     if (json_last_error() !== JSON_ERROR_NONE) $content = [[ 'id' => uniqid('blk_'), 'type' => 'rich-text', 'content' => $p->post_content ]];
@@ -301,7 +304,7 @@ function fn_api_get_single_note($request) {
 function fn_api_delete_note($request) {
     $id = intval($request['id']);
     $ws = intval(get_post_meta($id, '_fn_workspace_id', true));
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     foreach(get_posts(['post_parent' => $id, 'post_status' => 'any']) as $c) wp_delete_post($c->ID, true);
     wp_delete_post($id, true);
     return rest_ensure_response(['deleted' => true]);
@@ -369,7 +372,7 @@ function fn_api_save_template( $request ) {
     // NEW: Save the template's workspace scope
     update_post_meta($id, '_fn_workspace_id', $ws_id);
     
-    return rest_ensure_response([ 'id' => $id, 'message' => 'Template saved.' ]);
+    return rest_ensure_response([ 'id' => $id, 'message' => __('Template saved.', 'family-notebook') ]);
 }
 
 function fn_api_delete_template($request) { wp_delete_post(intval($request['id']), true); return rest_ensure_response(['deleted' => true]); }
@@ -379,7 +382,7 @@ function fn_api_export_template($request) {
     
     // ADDED: Verify user has access to the workspace where this folder exists
     $ws = intval(get_post_meta($f_id, '_fn_workspace_id', true));
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
 
     $notes = get_posts(['post_type' => 'fn_note_page', 'post_parent' => $f_id, 'posts_per_page' => -1]);
     $data = ['template_name' => get_the_title($f_id), 'type' => 'fn_folder_template', 'notes' => []];
@@ -392,12 +395,12 @@ function fn_api_import_template($request) {
     $ws = intval($p['workspace_id']);
     
     // ADDED: Verify user has access to the target workspace
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     
     $tpl = $p['template_data'];
-    $f_id = wp_insert_post(['post_title' => sanitize_text_field($tpl['template_name']).' (Imported)', 'post_type' => 'fn_note_page', 'post_status' => 'publish']);
+    $f_id = wp_insert_post(['post_title' => sanitize_text_field($tpl['template_name']).' ' . __('(Imported)', 'family-notebook'), 'post_type' => 'fn_note_page', 'post_status' => 'publish']);
     update_post_meta($f_id, '_fn_workspace_id', $ws);
-    $items = [['id' => $f_id, 'title' => $tpl['template_name'].' (Imported)', 'parent_id' => 0]];
+    $items = [['id' => $f_id, 'title' => $tpl['template_name'].' ' . __('(Imported)', 'family-notebook'), 'parent_id' => 0]];
     foreach($tpl['notes'] as $n) {
         $nid = wp_insert_post(['post_title' => sanitize_text_field($n['title']), 'post_type' => 'fn_note_page', 'post_status' => 'publish', 'post_parent' => $f_id, 'post_content' => wp_slash(wp_json_encode($n['content']))]); // Added wp_slash here just in case!
         update_post_meta($nid, '_fn_workspace_id', $ws);
@@ -411,7 +414,7 @@ function fn_api_get_workspace_users($request) {
     $ws = intval($request['id']);
     
     // ADDED: Verify user is a member before viewing users
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
 
     $query = $wpdb->prepare("
         SELECT u.ID as id, u.display_name as name, u.user_email as email, m.app_role
@@ -426,12 +429,12 @@ function fn_api_get_workspace_users($request) {
     if ($results) {
         foreach ($results as $row) {
             $data[] = [
-				'id' => (int)$row['id'],
-				'name' => $row['name'],
-				'email' => $row['email'],
-				'is_owner' => ($row['app_role'] === 'owner'),
-				'role' => $row['app_role'] // <-- Make sure this line exists so React knows what role to display!
-			];
+                'id' => (int)$row['id'],
+                'name' => $row['name'],
+                'email' => $row['email'],
+                'is_owner' => ($row['app_role'] === 'owner'),
+                'role' => $row['app_role'] // <-- Make sure this line exists so React knows what role to display!
+            ];
         }
     }
     
@@ -443,13 +446,13 @@ function fn_api_add_workspace_user($request) {
     $ws = intval($request['id']);
     
     // ADDED: Verify user is authorized to invite others (ideally an owner, but this prevents random scraping)
-    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', 'Unauthorized' );
+    if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     
     $email = sanitize_email($request->get_json_params()['email']);
     $u = get_user_by('email', $email);
     
     $workspace = $wpdb->get_row($wpdb->prepare("SELECT workspace_name, join_code FROM {$wpdb->prefix}fn_workspaces WHERE id = %d", $ws));
-    if (!$workspace) return new WP_Error('404', 'Workspace not found.');
+    if (!$workspace) return new WP_Error('404', __('Workspace not found.', 'family-notebook'));
     
     $workspace_name = $workspace->workspace_name;
     $login_url = get_option('fn_app_login_url', site_url());
@@ -462,21 +465,20 @@ function fn_api_add_workspace_user($request) {
         $message = "
             <html>
             <body style='font-family: sans-serif; color: #334155;'>
-                <h2>You've been invited to Family Notebook!</h2>
-                <p>Someone has invited you to join the workspace <strong>" . esc_html($workspace_name) . "</strong>.</p>
-                <p>To accept this invitation, please create a free account by clicking the link below:</p>
-                <p><br><a href='" . esc_url($invite_link) . "' style='background:#10b981; color:#fff; padding:10px 20px; text-decoration:none; border-radius:4px; display:inline-block;'>Create Account & Join</a><br><br></p>
-                <p>Best regards,<br>The Family Notebook Team</p>
+                <h2>" . esc_html__("You've been invited to Family Notebook!", 'family-notebook') . "</h2>
+                <p>" . sprintf(esc_html__("Someone has invited you to join the workspace %s.", 'family-notebook'), "<strong>" . esc_html($workspace_name) . "</strong>") . "</p>
+                <p>" . esc_html__("To accept this invitation, please create a free account by clicking the link below:", 'family-notebook') . "</p>
+                <p><br><a href='" . esc_url($invite_link) . "' style='background:#10b981; color:#fff; padding:10px 20px; text-decoration:none; border-radius:4px; display:inline-block;'>" . esc_html__("Create Account & Join", 'family-notebook') . "</a><br><br></p>
+                <p>" . esc_html__("Best regards,", 'family-notebook') . "<br>" . esc_html__("The Family Notebook Team", 'family-notebook') . "</p>
             </body>
             </html>
         ";
-        wp_mail($email, "Invitation: Join " . $workspace_name, $message);
+        wp_mail($email, sprintf(__("Invitation: Join %s", 'family-notebook'), $workspace_name), $message);
         remove_filter( 'wp_mail_content_type', function() { return 'text/html'; } );
         
         return rest_ensure_response(['success' => true, 'status' => 'invite_sent_to_new_user']);
     }
 
-    // SCENARIO 2: User ALREADY exists (Your original logic)
     // SCENARIO 2: User ALREADY exists
     $table_members = $wpdb->prefix . 'fn_workspace_members';
     $existing = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $u->ID));
@@ -495,14 +497,14 @@ function fn_api_add_workspace_user($request) {
         $message = "
             <html>
             <body style='font-family: sans-serif; color: #334155;'>
-                <h2>You've been added to a new workspace!</h2>
-                <p>Hi " . esc_html($u->display_name) . ",</p>
-                <p>You have been granted access to the workspace <strong>" . esc_html($workspace_name) . "</strong>.</p>
-                <p><br><a href='" . esc_url($login_url) . "' style='background:#0284c7; color:#fff; padding:10px 20px; text-decoration:none; border-radius:4px; display:inline-block;'>Access Your Workspace</a><br><br></p>
+                <h2>" . esc_html__("You've been added to a new workspace!", 'family-notebook') . "</h2>
+                <p>" . sprintf(esc_html__("Hi %s,", 'family-notebook'), esc_html($u->display_name)) . "</p>
+                <p>" . sprintf(esc_html__("You have been granted access to the workspace %s.", 'family-notebook'), "<strong>" . esc_html($workspace_name) . "</strong>") . "</p>
+                <p><br><a href='" . esc_url($login_url) . "' style='background:#0284c7; color:#fff; padding:10px 20px; text-decoration:none; border-radius:4px; display:inline-block;'>" . esc_html__("Access Your Workspace", 'family-notebook') . "</a><br><br></p>
             </body>
             </html>
         ";
-        wp_mail($email, "Update: Access granted to " . $workspace_name, $message);
+        wp_mail($email, sprintf(__("Update: Access granted to %s", 'family-notebook'), $workspace_name), $message);
     }
     remove_filter( 'wp_mail_content_type', function() { return 'text/html'; } );
 
@@ -520,14 +522,14 @@ function fn_api_update_workspace_user_role($request) {
 
     // 1. Validate the role
     $allowed_roles = ['owner', 'organizer', 'user', 'viewer'];
-    if (!in_array($new_role, $allowed_roles)) return new WP_Error('invalid', 'Invalid role', ['status' => 400]);
+    if (!in_array($new_role, $allowed_roles)) return new WP_Error('invalid', __('Invalid role', 'family-notebook'), ['status' => 400]);
 
     // 2. Verify the CURRENT user is an owner or organizer
     $table_members = $wpdb->prefix . 'fn_workspace_members';
     $current_user_role = $wpdb->get_var($wpdb->prepare("SELECT app_role FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $current_user_id));
 
     if (!in_array($current_user_role, ['owner', 'organizer'])) {
-        return new WP_Error('forbidden', 'You do not have permission to change roles.', ['status' => 403]);
+        return new WP_Error('forbidden', __('You do not have permission to change roles.', 'family-notebook'), ['status' => 403]);
     }
 
     // 3. Update the role in the database
@@ -543,7 +545,7 @@ function fn_api_update_workspace_user_role($request) {
 // 7. Admin Panel
 add_action( 'admin_menu', 'fn_register_admin_menu' );
 function fn_register_admin_menu() {
-    add_menu_page('Family Notebook Settings', 'Family Notebook', 'manage_options', 'family-notebook', 'fn_render_admin_settings', 'dashicons-book', 30);
+    add_menu_page(__('Family Notebook Settings', 'family-notebook'), __('Family Notebook', 'family-notebook'), 'manage_options', 'family-notebook', 'fn_render_admin_settings', 'dashicons-book', 30);
 }
 // Register the setting in the database
 // Register the settings in the database
@@ -561,8 +563,8 @@ function fn_render_admin_settings() {
     $starter_ws = get_option('fn_starter_workspace_id', 0);
     ?>
     <div class="wrap">
-        <h1>Family Notebook Administration</h1>
-        <p>Global settings management for the Family Notebook application.</p>
+        <h1><?php esc_html_e('Family Notebook Administration', 'family-notebook'); ?></h1>
+        <p><?php esc_html_e('Global settings management for the Family Notebook application.', 'family-notebook'); ?></p>
         
         <form method="post" action="options.php">
             <?php 
@@ -571,30 +573,65 @@ function fn_render_admin_settings() {
             ?>
             <table class="form-table">
                 <tr valign="top">
-                    <th scope="row">App Login URL</th>
+                    <th scope="row"><?php esc_html_e('App Login URL', 'family-notebook'); ?></th>
                     <td>
                         <input type="url" name="fn_app_login_url" value="<?php echo esc_attr( get_option('fn_app_login_url', site_url()) ); ?>" style="width: 100%; max-width: 400px;" />
-                        <p class="description">The URL where your <code>[family_notebook_app]</code> shortcode is located.</p>
+                        <p class="description"><?php echo sprintf(esc_html__('The URL where your %s shortcode is located.', 'family-notebook'), '<code>[family_notebook_app]</code>'); ?></p>
                     </td>
                 </tr>
                 <tr valign="top">
-                    <th scope="row">Starter Kit Workspace</th>
+                    <th scope="row"><?php esc_html_e('Starter Kit Workspace', 'family-notebook'); ?></th>
                     <td>
                         <select name="fn_starter_workspace_id" style="width: 100%; max-width: 400px;">
-                            <option value="0">-- None (Start Empty) --</option>
+                            <option value="0"><?php esc_html_e('-- None (Start Empty) --', 'family-notebook'); ?></option>
                             <?php foreach($workspaces as $ws): ?>
                                 <option value="<?php echo esc_attr($ws->id); ?>" <?php selected($starter_ws, $ws->id); ?>>
                                     <?php echo esc_html($ws->workspace_name); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
-                        <p class="description">Select a master workspace. Whenever a new workspace is created, it will automatically clone all folders and notes from this workspace as a starter kit.</p>
+                        <p class="description"><?php esc_html_e('Select a master workspace. Whenever a new workspace is created, it will automatically clone all folders and notes from this workspace as a starter kit.', 'family-notebook'); ?></p>
                     </td>
                 </tr>
             </table>
             
             <?php submit_button(); ?>
         </form>
+
+        <hr style="margin: 40px 0;">
+
+        <h2><?php esc_html_e('Data Management & Backups', 'family-notebook'); ?></h2>
+        <p><?php echo sprintf(esc_html__('Use these tools to backup your Family Notebook data or migrate it to a completely different WordPress website. %s', 'family-notebook'), '<em>' . esc_html__('Note: Standard WordPress migration plugins (like UpdraftPlus) will already include this data automatically.', 'family-notebook') . '</em>'); ?></p>
+        
+        <?php if (isset($_GET['import']) && $_GET['import'] === 'success'): ?>
+            <div class="notice notice-success is-dismissible"><p><strong><?php esc_html_e('Success!', 'family-notebook'); ?></strong> <?php esc_html_e('App data successfully imported. You are now the Owner of all imported workspaces.', 'family-notebook'); ?></p></div>
+        <?php endif; ?>
+
+        <table class="form-table">
+            <tr valign="top">
+                <th scope="row"><?php esc_html_e('Export Full Backup', 'family-notebook'); ?></th>
+                <td>
+                    <a href="<?php echo esc_url(admin_url('admin-post.php?action=fn_export_app_data')); ?>" class="button button-primary" style="background: #10b981; border-color: #059669;">
+                        <?php esc_html_e('Download App Backup (.json)', 'family-notebook'); ?>
+                    </a>
+                    <p class="description"><?php esc_html_e('Downloads a complete backup of all Workspaces, Folders, Notes, and Templates.', 'family-notebook'); ?></p>
+                </td>
+            </tr>
+            <tr valign="top">
+                <th scope="row"><?php esc_html_e('Import Data', 'family-notebook'); ?></th>
+                <td>
+                    <form action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="post" enctype="multipart/form-data" onsubmit="return confirm('<?php echo esc_js(__('WARNING: Are you sure you want to import this data? It will add new workspaces to your database.', 'family-notebook')); ?>');">
+                        <input type="hidden" name="action" value="fn_import_app_data">
+                        <?php wp_nonce_field('fn_import_nonce'); ?>
+                        
+                        <input type="file" name="fn_import_file" accept=".json" required />
+                        <button type="submit" class="button button-secondary"><?php esc_html_e('Upload & Import', 'family-notebook'); ?></button>
+                        <p class="description"><?php echo sprintf(esc_html__('Select a .json file previously generated by the Export tool. %s Because user accounts cannot be safely migrated between different websites, you (the current Administrator) will be assigned as the Owner of all imported workspaces. You will need to re-invite your members.', 'family-notebook'), '<strong>' . esc_html__('Important:', 'family-notebook') . '</strong>'); ?></p>
+                    </form>
+                </td>
+            </tr>
+        </table>
+        
     </div>
     <?php
 }
@@ -661,7 +698,7 @@ function fn_serve_pwa_assets() {
             "id" => "family-notebook-app-v1", // <-- NEW: Explicitly separates this from the Chore Chart
             "name" => "Family Notebook",
             "short_name" => "Notebook",
-            "start_url" => $app_url,          // <-- NEW: Forces the app to open on the correct page
+            "start_url" => $app_url,         // <-- NEW: Forces the app to open on the correct page
             "scope" => $app_path,             // <-- NEW: Restricts the PWA so it doesn't overlap with other apps
             "display" => "standalone",
             "background_color" => "#f1f5f9",
@@ -756,14 +793,14 @@ function fn_render_app_shortcode() {
         echo $standalone_css; // Inject CSS into the login screen too
         ?>
         <div style="max-width: 400px; margin: 40px auto; padding: 30px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); font-family: sans-serif;">
-            <h2 style="text-align: center; color: #1e293b; margin-top: 0; margin-bottom: 25px;">Family Notebook</h2>
+            <h2 style="text-align: center; color: #1e293b; margin-top: 0; margin-bottom: 25px;"><?php esc_html_e('Family Notebook', 'family-notebook'); ?></h2>
             
             <?php 
             if ( shortcode_exists( 'nextend_social_login' ) ) {
                 echo '<div style="display: flex; justify-content: center; margin-bottom: 25px;">' . do_shortcode( '[nextend_social_login provider="google"]' ) . '</div>';
                 echo '<div style="display: flex; align-items: center; text-align: center; color: #94a3b8; font-size: 14px; margin-bottom: 20px;">
                         <div style="flex: 1; border-bottom: 1px solid #e2e8f0;"></div>
-                        <span style="padding: 0 10px;">or login with email</span>
+                        <span style="padding: 0 10px;">' . esc_html__('or login with email', 'family-notebook') . '</span>
                         <div style="flex: 1; border-bottom: 1px solid #e2e8f0;"></div>
                       </div>';
             }
@@ -771,21 +808,21 @@ function fn_render_app_shortcode() {
 
             <form name="loginform" id="loginform" action="<?php echo esc_url( site_url( 'wp-login.php', 'login_post' ) ); ?>" method="post">
                 <p style="margin-bottom: 15px;">
-                    <label for="user_login" style="display: block; font-size: 14px; color: #475569; margin-bottom: 5px; font-weight: bold;">Email or Username</label>
+                    <label for="user_login" style="display: block; font-size: 14px; color: #475569; margin-bottom: 5px; font-weight: bold;"><?php esc_html_e('Email or Username', 'family-notebook'); ?></label>
                     <input type="text" name="log" id="user_login" value="" style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; font-size: 16px;" required />
                 </p>
                 <p style="margin-bottom: 20px;">
-                    <label for="user_pass" style="display: block; font-size: 14px; color: #475569; margin-bottom: 5px; font-weight: bold;">Password</label>
+                    <label for="user_pass" style="display: block; font-size: 14px; color: #475569; margin-bottom: 5px; font-weight: bold;"><?php esc_html_e('Password', 'family-notebook'); ?></label>
                     <input type="password" name="pwd" id="user_pass" value="" style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; font-size: 16px;" required />
                 </p>
                 <p style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <label style="font-size: 14px; color: #475569; cursor: pointer;">
-                        <input name="rememberme" type="checkbox" id="rememberme" value="forever" style="margin-right: 5px;" /> Remember Me
+                        <input name="rememberme" type="checkbox" id="rememberme" value="forever" style="margin-right: 5px;" /> <?php esc_html_e('Remember Me', 'family-notebook'); ?>
                     </label>
-                    <a href="<?php echo esc_url( wp_lostpassword_url() ); ?>" style="font-size: 14px; color: #0284c7; text-decoration: none;">Forgot Password?</a>
+                    <a href="<?php echo esc_url( wp_lostpassword_url() ); ?>" style="font-size: 14px; color: #0284c7; text-decoration: none;"><?php esc_html_e('Forgot Password?', 'family-notebook'); ?></a>
                 </p>
                 <p style="margin: 0;">
-                    <input type="submit" name="wp-submit" id="wp-submit" value="Log In" style="width: 100%; background-color: #0f172a; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 16px;" />
+                    <input type="submit" name="wp-submit" id="wp-submit" value="<?php esc_attr_e('Log In', 'family-notebook'); ?>" style="width: 100%; background-color: #0f172a; color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 16px;" />
                     <input type="hidden" name="redirect_to" value="<?php echo esc_url( get_permalink() ); ?>" />
                 </p>
             </form>
@@ -797,9 +834,9 @@ function fn_render_app_shortcode() {
     // Inject CSS and the Custom App Header into the main app experience
     return $standalone_css . '
         <div class="fn-native-app-header">
-            <h1>Family Notebook</h1>
+            <h1>' . esc_html__('Family Notebook', 'family-notebook') . '</h1>
         </div>
-        <div id="family-notebook-root">Loading...</div>
+        <div id="family-notebook-root">' . esc_html__('Loading...', 'family-notebook') . '</div>
     ';
 }
 
@@ -815,6 +852,165 @@ function fn_create_custom_tables() {
     dbDelta("CREATE TABLE {$wpdb->prefix}fn_workspaces (id bigint(20) NOT NULL AUTO_INCREMENT, workspace_name varchar(255) NOT NULL, theme_color varchar(7) NOT NULL, join_code varchar(12) NOT NULL, created_by bigint(20) NOT NULL, PRIMARY KEY (id)) $charset_collate;");
     dbDelta("CREATE TABLE {$wpdb->prefix}fn_workspace_members (id bigint(20) NOT NULL AUTO_INCREMENT, workspace_id bigint(20) NOT NULL, user_id bigint(20) NOT NULL, app_role varchar(50) NOT NULL, PRIMARY KEY (id)) $charset_collate;");
 }
+// ==========================================
+// GLOBAL BACKUP & RESTORE
+// ==========================================
+
+add_action('admin_post_fn_export_app_data', 'fn_export_app_data');
+function fn_export_app_data() {
+    // Security check: Only admins can download the entire app database
+    if (!current_user_can('manage_options')) wp_die(__('Unauthorized', 'family-notebook'));
+    
+    global $wpdb;
+
+    // 1. Setup the Backup Array
+    $data = [
+        'version' => '1.0.0',
+        'export_date' => current_time('mysql'),
+        'workspaces' => $wpdb->get_results("SELECT id, workspace_name, theme_color, join_code FROM {$wpdb->prefix}fn_workspaces", ARRAY_A),
+        'notes' => [],
+        'templates' => []
+    ];
+
+    // 2. Fetch all Notes and Folders
+    $notes = get_posts(['post_type' => 'fn_note_page', 'posts_per_page' => -1, 'post_status' => 'any']);
+    foreach($notes as $n) {
+        $data['notes'][] = [
+            'old_id' => $n->ID, // We need this to reconstruct the folder hierarchy later!
+            'title' => $n->post_title,
+            'content' => $n->post_content,
+            'parent_id' => $n->post_parent,
+            'workspace_id' => get_post_meta($n->ID, '_fn_workspace_id', true)
+        ];
+    }
+
+    // 3. Fetch all Library Templates
+    $templates = get_posts(['post_type' => 'fn_template', 'posts_per_page' => -1, 'post_status' => 'any']);
+    foreach($templates as $t) {
+        $data['templates'][] = [
+            'title' => $t->post_title,
+            'content' => $t->post_content,
+            'workspace_id' => get_post_meta($t->ID, '_fn_workspace_id', true)
+        ];
+    }
+
+    // 4. Force browser to download the JSON file
+    header('Content-Type: application/json');
+    header('Content-Disposition: attachment; filename="family-notebook-full-backup-' . date('Y-m-d') . '.json"');
+    echo wp_json_encode($data);
+    exit;
+}
+
+add_action('admin_post_fn_import_app_data', 'fn_import_app_data');
+function fn_import_app_data() {
+    // 1. Security Check
+    if (!current_user_can('manage_options')) wp_die(__('Unauthorized', 'family-notebook'));
+    check_admin_referer('fn_import_nonce');
+
+    // 2. Validate File Upload
+    if (empty($_FILES['fn_import_file']['tmp_name'])) {
+        wp_die(__('No file uploaded.', 'family-notebook'));
+    }
+
+    $json_data = file_get_contents($_FILES['fn_import_file']['tmp_name']);
+    $data = json_decode($json_data, true);
+
+    if (!$data || !isset($data['version']) || !isset($data['workspaces'])) {
+        wp_die(__('Invalid Backup File.', 'family-notebook'));
+    }
+
+    global $wpdb;
+    $current_user_id = get_current_user_id();
+    
+    // Translation Dictionaries (Old ID => New ID)
+    $workspace_map = [];
+    $note_map = [];
+    $notes_to_relink = []; // Stores notes that need parents attached after the first pass
+
+    // ==========================================
+    // PHASE 1: Import Workspaces & Assign Ownership
+    // ==========================================
+    if (!empty($data['workspaces'])) {
+        foreach ($data['workspaces'] as $ws) {
+            $wpdb->insert($wpdb->prefix . 'fn_workspaces', [
+                'workspace_name' => sanitize_text_field($ws['workspace_name']),
+                'theme_color'    => sanitize_text_field($ws['theme_color']),
+                'join_code'      => strtoupper(substr(md5(uniqid(rand(), true)), 0, 8)), // Generate fresh join codes
+                'created_by'     => $current_user_id
+            ]);
+            
+            $new_ws_id = $wpdb->insert_id;
+            $workspace_map[$ws['id']] = $new_ws_id;
+
+            // Make the admin who is importing the file the Owner of the new workspace
+            $wpdb->insert($wpdb->prefix . 'fn_workspace_members', [
+                'workspace_id' => $new_ws_id,
+                'user_id'      => $current_user_id,
+                'app_role'     => 'owner'
+            ]);
+        }
+    }
+
+    // ==========================================
+    // PHASE 2: Import Templates
+    // ==========================================
+    if (!empty($data['templates'])) {
+        foreach ($data['templates'] as $t) {
+            $new_template_id = wp_insert_post([
+                'post_title'   => sanitize_text_field($t['title']),
+                'post_content' => wp_slash($t['content']), // PROTECT JSON!
+                'post_type'    => 'fn_template',
+                'post_status'  => 'publish'
+            ]);
+
+            $new_ws_id = isset($workspace_map[$t['workspace_id']]) ? $workspace_map[$t['workspace_id']] : 0;
+            update_post_meta($new_template_id, '_fn_workspace_id', $new_ws_id);
+        }
+    }
+
+    // ==========================================
+    // PHASE 3: Import Notes (Pass 1 - Insertion)
+    // ==========================================
+    if (!empty($data['notes'])) {
+        foreach ($data['notes'] as $n) {
+            $new_note_id = wp_insert_post([
+                'post_title'   => sanitize_text_field($n['title']),
+                'post_content' => wp_slash($n['content']), // PROTECT JSON!
+                'post_type'    => 'fn_note_page',
+                'post_status  ' => 'publish',
+                'post_parent'  => 0 // Default to zero for now
+            ]);
+
+            // Save mapping and metadata
+            $note_map[$n['old_id']] = $new_note_id;
+            
+            $new_ws_id = isset($workspace_map[$n['workspace_id']]) ? $workspace_map[$n['workspace_id']] : 0;
+            update_post_meta($new_note_id, '_fn_workspace_id', $new_ws_id);
+
+            // If it had a parent, queue it for Phase 4
+            if ($n['parent_id'] > 0) {
+                $notes_to_relink[$new_note_id] = $n['parent_id'];
+            }
+        }
+    }
+
+    // ==========================================
+    // PHASE 4: Relink Note Hierarchies (Pass 2)
+    // ==========================================
+    foreach ($notes_to_relink as $new_child_id => $old_parent_id) {
+        // If the old parent was successfully imported, we attach the child to the new parent ID
+        if (isset($note_map[$old_parent_id])) {
+            wp_update_post([
+                'ID' => $new_child_id,
+                'post_parent' => $note_map[$old_parent_id]
+            ]);
+        }
+    }
+
+    // Redirect back to settings page with a success flag
+    wp_redirect(admin_url('admin.php?page=family-notebook&import=success'));
+    exit;
+}
 
 // ==========================================
 // ADMIN UI: TEMPLATE SCOPE MANAGEMENT
@@ -823,7 +1019,7 @@ function fn_create_custom_tables() {
 // 1. Add Meta Box to the Template Editor
 add_action('add_meta_boxes', 'fn_template_meta_box');
 function fn_template_meta_box() {
-    add_meta_box('fn_template_workspace', 'Template Scope', 'fn_template_meta_box_html', 'fn_template', 'side', 'default');
+    add_meta_box('fn_template_workspace', __('Template Scope', 'family-notebook'), 'fn_template_meta_box_html', 'fn_template', 'side', 'default');
 }
 
 function fn_template_meta_box_html($post) {
@@ -833,15 +1029,15 @@ function fn_template_meta_box_html($post) {
     
     $workspaces = $wpdb->get_results("SELECT id, workspace_name FROM {$wpdb->prefix}fn_workspaces ORDER BY workspace_name ASC");
 
-    echo '<label for="fn_workspace_id" style="font-weight:bold;">Assign to Workspace:</label>';
+    echo '<label for="fn_workspace_id" style="font-weight:bold;">' . esc_html__('Assign to Workspace:', 'family-notebook') . '</label>';
     echo '<select name="fn_workspace_id" id="fn_workspace_id" style="width:100%; margin-top:10px;">';
-    echo '<option value="0" ' . selected($current_ws, 0, false) . '>🌎 Global (All Workspaces)</option>';
+    echo '<option value="0" ' . selected($current_ws, 0, false) . '>🌎 ' . esc_html__('Global (All Workspaces)', 'family-notebook') . '</option>';
     
     foreach($workspaces as $ws) {
         echo '<option value="' . esc_attr($ws->id) . '" ' . selected($current_ws, $ws->id, false) . '>📁 ' . esc_html($ws->workspace_name) . '</option>';
     }
     echo '</select>';
-    echo '<p class="description">Global templates are available to everyone. Workspace templates are only visible inside the selected family/group.</p>';
+    echo '<p class="description">' . esc_html__('Global templates are available to everyone. Workspace templates are only visible inside the selected family/group.', 'family-notebook') . '</p>';
     wp_nonce_field('fn_save_template_scope', 'fn_template_scope_nonce');
 }
 
@@ -860,7 +1056,7 @@ function fn_save_template_meta($post_id) {
 // 3. Add Custom Column to Template List Table for easy viewing
 add_filter('manage_fn_template_posts_columns', 'fn_template_columns');
 function fn_template_columns($columns) {
-    $columns['workspace_scope'] = 'Workspace Scope';
+    $columns['workspace_scope'] = __('Workspace Scope', 'family-notebook');
     return $columns;
 }
 
@@ -869,11 +1065,11 @@ function fn_template_column_content($column, $post_id) {
     if ($column === 'workspace_scope') {
         $ws_id = get_post_meta($post_id, '_fn_workspace_id', true);
         if (!$ws_id || $ws_id == 0) {
-            echo '<span style="color:#0284c7; font-weight:bold;">🌎 Global</span>';
+            echo '<span style="color:#0284c7; font-weight:bold;">🌎 ' . esc_html__('Global', 'family-notebook') . '</span>';
         } else {
             global $wpdb;
             $name = $wpdb->get_var($wpdb->prepare("SELECT workspace_name FROM {$wpdb->prefix}fn_workspaces WHERE id = %d", $ws_id));
-            echo esc_html($name ? "📁 " . $name : "Unknown Workspace");
+            echo esc_html($name ? "📁 " . $name : __('Unknown Workspace', 'family-notebook'));
         }
     }
 }
