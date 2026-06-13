@@ -390,16 +390,98 @@ export const ChoreChartBlock = ({ block, updateBlock, isEditMode }) => {
 // 3. RICH TEXT BLOCK
 // -----------------------------
 export const RichTextBlock = ({ block, updateBlock, isEditMode }) => {
-    return isEditMode ? (
-        <textarea 
-            value={block.content || ''}
-            onChange={(e) => updateBlock(block.id, { content: e.target.value })}
-            placeholder="Type your notes here..."
-            style={{ width: '100%', minHeight: '100px', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '10px', fontSize: '16px', resize: 'vertical', outline: 'none', fontFamily: 'inherit' }}
-        />
-    ) : (
-        <div style={{ whiteSpace: 'pre-wrap', color: '#334155', fontSize: '16px', lineHeight: '1.6' }}>
-            {block.content || "Empty text block"}
+    const editorRef = useRef(null);
+
+    const handleFormat = (command, value = null) => {
+        document.execCommand(command, false, value);
+        // Ensure the editor stays in focus after formatting
+        if (editorRef.current) editorRef.current.focus();
+    };
+
+    // We only save the data when the user clicks completely AWAY from the text box.
+    const handleBlur = () => {
+        if (editorRef.current) {
+            updateBlock(block.id, { content: editorRef.current.innerHTML });
+        }
+    };
+
+    const btnStyle = {
+        backgroundColor: 'white',
+        border: '1px solid #cbd5e1',
+        borderRadius: '4px',
+        padding: '6px 12px',
+        cursor: 'pointer',
+        color: '#475569',
+        fontWeight: 'bold',
+        fontSize: '14px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+    };
+
+    // Helper component for buttons to prevent focus loss
+    const ToolbarButton = ({ command, value = null, title, children }) => (
+        <button 
+            // CRITICAL: onMouseDown preventDefault stops the button from stealing cursor focus!
+            onMouseDown={(e) => e.preventDefault()} 
+            onClick={() => handleFormat(command, value)} 
+            style={btnStyle} 
+            title={title}
+            type="button"
+        >
+            {children}
+        </button>
+    );
+
+    return (
+        <div style={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', marginBottom: '10px' }}>
+            
+            {/* RICH TEXT TOOLBAR */}
+            <div className="fn-hide-print" style={{ backgroundColor: '#f8fafc', padding: '10px', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <ToolbarButton command="bold" title="Bold"><b>B</b></ToolbarButton>
+                <ToolbarButton command="italic" title="Italic"><i>I</i></ToolbarButton>
+                <ToolbarButton command="underline" title="Underline"><u>U</u></ToolbarButton>
+                
+                {/* NEW: Alignment Buttons */}
+                <div style={{ width: '1px', backgroundColor: '#cbd5e1', margin: '0 5px' }}></div>
+                
+                <ToolbarButton command="justifyLeft" title="Align Left">⫷ Left</ToolbarButton>
+                <ToolbarButton command="justifyCenter" title="Align Center">≡ Center</ToolbarButton>
+                <ToolbarButton command="justifyRight" title="Align Right">⫸ Right</ToolbarButton>
+                
+                <div style={{ width: '1px', backgroundColor: '#cbd5e1', margin: '0 5px' }}></div>
+                
+                <ToolbarButton command="formatBlock" value="H2" title="Heading 2">H2</ToolbarButton>
+                <ToolbarButton command="formatBlock" value="H3" title="Heading 3">H3</ToolbarButton>
+                <ToolbarButton command="formatBlock" value="P" title="Paragraph">P</ToolbarButton>
+                
+                <div style={{ width: '1px', backgroundColor: '#cbd5e1', margin: '0 5px' }}></div>
+                
+                <ToolbarButton command="insertUnorderedList" title="Bullet List">• List</ToolbarButton>
+                <ToolbarButton command="insertOrderedList" title="Numbered List">1. List</ToolbarButton>
+
+                <div style={{ width: '1px', backgroundColor: '#cbd5e1', margin: '0 5px' }}></div>
+                
+                <ToolbarButton command="removeFormat" title="Clear Formatting">⌫ Clear</ToolbarButton>
+            </div>
+            
+            {/* EDITABLE CONTENT AREA */}
+            <div
+                ref={editorRef}
+                contentEditable={true} // Always editable so you can type immediately
+                suppressContentEditableWarning={true} // Stops React from throwing console warnings
+                onBlur={handleBlur}
+                dangerouslySetInnerHTML={{ __html: block.content || '<p><br></p>' }}
+                style={{ 
+                    padding: '20px', 
+                    minHeight: '150px', 
+                    outline: 'none',
+                    color: '#334155',
+                    lineHeight: '1.6',
+                    fontSize: '16px',
+                    cursor: 'text'
+                }}
+            />
         </div>
     );
 };

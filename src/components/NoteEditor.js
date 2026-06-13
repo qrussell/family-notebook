@@ -2,7 +2,7 @@ import { useState, useEffect } from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
 import { RichTextBlock, ChecklistBlock, ChoreChartBlock } from './Blocks';
 
-const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, onNoteCreated, onNoteUpdated, onTemplateSaved }) => {
+const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, onNoteCreated, onNoteUpdated, onTemplateSaved, canEdit }) => {
     const [title, setTitle] = useState('');
     const [tabs, setTabs] = useState([]);
     const [activeTabId, setActiveTabId] = useState(null);
@@ -90,7 +90,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
             data: { 
                 title: templateName, 
                 content: { tabs: tabs },
-                workspace_id: workspaceId // <-- NEW: Passes the workspace scope to the backend
+                workspace_id: workspaceId // <-- Passes the workspace scope to the backend
             } 
         }).then((response) => {
             alert("Layout saved to your Template Library!");
@@ -291,8 +291,10 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                 <button onClick={onClose} style={{ background: 'transparent', border: '1px solid #cbd5e1', color: '#475569', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer' }}>&larr; Back</button>
                 <div style={{ display: 'flex', gap: '10px' }}>
                     {!isEditMode && <button onClick={() => window.print()} style={{ backgroundColor: 'white', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>🖨️ Print</button>}
+                    
+                    {/* Hide Edit Layout for Viewers */}
                     {!isEditMode ? (
-                        <button onClick={() => setIsEditMode(true)} style={{ backgroundColor: 'white', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>✏️ Edit Layout</button>
+                        canEdit && <button onClick={() => setIsEditMode(true)} style={{ backgroundColor: 'white', color: '#475569', border: '1px solid #cbd5e1', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>✏️ Edit Layout</button>
                     ) : (
                         <div style={{ display: 'flex', gap: '10px' }}>
                             <button onClick={handleSaveToLibrary} style={{ backgroundColor: 'white', color: workspaceColor, border: `1px solid ${workspaceColor}`, padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>💾 Save to Library</button>
@@ -312,27 +314,41 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                 <div className="fn-hide-print fn-tab-bar" style={{ display: 'flex', borderBottom: '2px solid #e2e8f0', marginBottom: '20px', overflowX: 'auto', backgroundColor: '#f8fafc', borderRadius: '8px 8px 0 0' }}>
                     {tabs.map((tab, index) => (
                         <div key={tab.id} onClick={() => setActiveTabId(tab.id)} style={{ padding: '12px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', backgroundColor: activeTabId === tab.id ? 'white' : 'transparent', borderTop: activeTabId === tab.id ? `3px solid ${workspaceColor}` : '3px solid transparent', borderRight: '1px solid #e2e8f0', fontWeight: activeTabId === tab.id ? 'bold' : 'normal', color: activeTabId === tab.id ? '#0f172a' : '#64748b' }}>
-                            <input 
-                                value={tab.title} 
-                                onChange={(e) => handleRenameTab(tab.id, e.target.value)} 
-                                onBlur={() => { if (!isEditMode) silentAutoSave(tabs); }}
-                                onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
-                                style={{ border: 'none', background: 'transparent', outline: 'none', width: `${Math.max(tab.title.length, 6)}ch`, color: 'inherit', fontWeight: 'inherit', fontSize: '14px' }} 
-                            />
                             
-                            {/* NEW: Move Left / Right Arrows (Only visible on the active tab) */}
-                            {activeTabId === tab.id && index > 0 && (
-                                <button onClick={(e) => handleMoveTab(tab.id, 'left', e)} title="Move Left" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 2px', fontSize: '16px' }}>&larr;</button>
+                            {/* Restricted Tab Renaming */}
+                            {canEdit ? (
+                                <input 
+                                    value={tab.title} 
+                                    onChange={(e) => handleRenameTab(tab.id, e.target.value)} 
+                                    onBlur={() => { if (!isEditMode) silentAutoSave(tabs); }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                                    style={{ border: 'none', background: 'transparent', outline: 'none', width: `${Math.max(tab.title.length, 6)}ch`, color: 'inherit', fontWeight: 'inherit', fontSize: '14px' }} 
+                                />
+                            ) : (
+                                <span style={{ fontSize: '14px' }}>{tab.title}</span>
                             )}
-                            {activeTabId === tab.id && index < tabs.length - 1 && (
-                                <button onClick={(e) => handleMoveTab(tab.id, 'right', e)} title="Move Right" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 2px', fontSize: '16px' }}>&rarr;</button>
-                            )}
+                            
+                            {/* Wrap all tab actions in canEdit */}
+                            {canEdit && (
+                                <>
+                                    {activeTabId === tab.id && index > 0 && (
+                                        <button onClick={(e) => handleMoveTab(tab.id, 'left', e)} title="Move Left" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 2px', fontSize: '16px' }}>&larr;</button>
+                                    )}
+                                    {activeTabId === tab.id && index < tabs.length - 1 && (
+                                        <button onClick={(e) => handleMoveTab(tab.id, 'right', e)} title="Move Right" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 2px', fontSize: '16px' }}>&rarr;</button>
+                                    )}
 
-                            <button onClick={(e) => handleDuplicateTab(tab.id, e)} title="Duplicate Page" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 4px', fontSize: '16px' }}>⎘</button>
-                            {tabs.length > 1 && <button onClick={(e) => handleDeleteTab(tab.id, e)} title="Delete Page" style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', padding: '0 4px', fontSize: '16px' }}>&times;</button>}
+                                    <button onClick={(e) => handleDuplicateTab(tab.id, e)} title="Duplicate Page" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '0 4px', fontSize: '16px' }}>⎘</button>
+                                    {tabs.length > 1 && <button onClick={(e) => handleDeleteTab(tab.id, e)} title="Delete Page" style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', padding: '0 4px', fontSize: '16px' }}>&times;</button>}
+                                </>
+                            )}
                         </div>
                     ))}
-                    <button onClick={handleAddTab} style={{ background: 'none', border: 'none', color: workspaceColor, cursor: 'pointer', padding: '0 20px', fontWeight: 'bold', fontSize: '14px' }}>+ Add Page</button>
+                    
+                    {/* Restricted Add Page Button */}
+                    {canEdit && (
+                        <button onClick={handleAddTab} style={{ background: 'none', border: 'none', color: workspaceColor, cursor: 'pointer', padding: '0 20px', fontWeight: 'bold', fontSize: '14px' }}>+ Add Page</button>
+                    )}
                 </div>
                 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '40px' }}>

@@ -54,6 +54,12 @@ const WorkspaceView = ({ workspace, onBack }) => {
     const [workspaceUsers, setWorkspaceUsers] = useState([]);
     const [inviteEmail, setInviteEmail] = useState('');
     const [isInviting, setIsInviting] = useState(false);
+    
+	// --- ROLE & PERMISSIONS LOGIC ---
+    const role = workspace.role || 'viewer';
+    const isOwner = role === 'owner';
+    const canManageUsers = ['owner', 'organizer'].includes(role);
+    const canEdit = ['owner', 'organizer', 'user'].includes(role);
 	
 	useEffect(() => {
         // Fetch Templates from the Library for this specific workspace (Includes Global)
@@ -61,6 +67,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
             .then(data => setTemplates(data))
             .catch(err => console.error("Failed to load templates", err));
     }, [workspace.id]); // Make sure to add workspace.id to the dependency array
+    
     // Calculate the best text color for the current workspace header
     const headerTextColor = getContrastTextColor(workspace.color);
     
@@ -116,6 +123,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
 
         return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     }, []);
+    
     const handleInviteUser = (e) => {
         e.preventDefault();
         if (!inviteEmail.trim()) return;
@@ -152,6 +160,21 @@ const WorkspaceView = ({ workspace, onBack }) => {
         });
     };
 	
+	const handleRoleChange = (userId, newRole) => {
+        apiFetch({
+            path: `/family-notebook/v1/workspaces/${workspace.id}/users/${userId}`,
+            method: 'PUT',
+            data: { role: newRole }
+        }).then(() => {
+            // Update the local state instantly so the UI reflects the change
+            setWorkspaceUsers(workspaceUsers.map(u => 
+                u.id === userId ? { ...u, role: newRole, is_owner: newRole === 'owner' } : u
+            ));
+        }).catch((err) => {
+            alert(err.message || "Failed to update role.");
+        });
+    };
+	
     // Handle Creating Both Folders AND Notes
     const handleCreateItem = (e, isFolder) => {
         e.preventDefault();
@@ -180,6 +203,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
             }
         }).catch(console.error);
     };
+    
 	// Execute Move or Copy
     const submitNoteAction = (newFolderId) => {
         if (!newFolderId || !actionNote) return;
@@ -205,6 +229,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
             }).catch(err => { console.error(err); alert("Failed to copy note."); });
         }
     };
+    
 	// Trigger PWA Installation
     const handleInstallApp = async () => {
         if (!installPrompt) return;
@@ -217,6 +242,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
             setInstallPrompt(null); // Hide button after install
         }
     };
+    
 	// 1. Delete a Folder
     const handleDeleteFolder = () => {
         if (!selectedFolder) return;
@@ -265,6 +291,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 alert("Server rejected deletion. Check the console.");
             });
     };
+    
 	// Handle Exporting a Folder as a JSON File
     const handleExportFolder = () => {
         if (!selectedFolder) return;
@@ -297,6 +324,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
                 alert("Failed to export template.");
             });
     };
+    
 	// Handle Importing a JSON Template
     const handleFileChange = (event) => {
         const file = event.target.files[0];
@@ -336,6 +364,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
         
         reader.readAsText(file);
     };
+    
     // Filter our flat array into hierarchy
     const folders = items.filter(item => item.parent_id === 0);
     const activeNotes = selectedFolder ? items.filter(item => item.parent_id === selectedFolder.id) : [];
@@ -356,6 +385,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
         padding: '10px', borderBottom: '1px solid #e2e8f0', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px',
         backgroundColor: isActive ? 'white' : 'transparent', fontWeight: isActive ? 'bold' : 'normal', borderRadius: isActive ? '4px' : '0'
     });
+    
     // Dynamic Sidebar Styling (Transforms into a slide-out drawer on mobile)
     const sidebarStyle = isMobile ? {
         position: 'absolute', top: 0, left: 0, bottom: 0, height: '100%', width: '280px',
@@ -378,6 +408,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
                     style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 999998 }} 
                 />
             )}
+            
            {/* MANAGE ACCESS MODAL */}
             {isManagingUsers && (
                 <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 999998, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: '80px', paddingLeft: '20px', paddingRight: '20px', paddingBottom: '20px' }}>
@@ -408,12 +439,37 @@ const WorkspaceView = ({ workspace, onBack }) => {
                             {workspaceUsers.map(user => (
                                 <li key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f1f5f9' }}>
                                     <div>
-                                        <div style={{ fontWeight: 'bold', color: '#334155' }}>{user.name} {user.is_owner && <span style={{ fontSize: '11px', backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '10px', marginLeft: '8px' }}>Owner</span>}</div>
+                                        <div style={{ fontWeight: 'bold', color: '#334155' }}>
+                                            {user.name} 
+                                            {user.id === workspace.created_by && <span style={{ fontSize: '11px', backgroundColor: '#e2e8f0', padding: '2px 6px', borderRadius: '10px', marginLeft: '8px' }}>Creator</span>}
+                                        </div>
                                         <div style={{ fontSize: '12px', color: '#64748b' }}>{user.email}</div>
                                     </div>
-                                    {!user.is_owner && (
-                                        <button onClick={() => handleRemoveUser(user.id, user.name)} style={{ background: 'transparent', border: '1px solid #ef4444', color: '#ef4444', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Remove</button>
-                                    )}
+                                    
+                                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                                        {/* Dropdown for role assignment (Only shown if you can manage users) */}
+                                        {canManageUsers ? (
+                                            <select 
+                                                value={user.role || 'viewer'} 
+                                                onChange={(e) => handleRoleChange(user.id, e.target.value)}
+                                                style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', marginRight: '10px', outline: 'none', backgroundColor: '#f8fafc' }}
+                                            >
+                                                <option value="owner">Owner</option>
+                                                <option value="organizer">Organizer</option>
+                                                <option value="user">User</option>
+                                                <option value="viewer">Viewer</option>
+                                            </select>
+                                        ) : (
+                                            <span style={{ fontSize: '11px', backgroundColor: '#e2e8f0', padding: '4px 8px', borderRadius: '4px', marginRight: '10px', textTransform: 'capitalize', color: '#64748b' }}>
+                                                {user.role}
+                                            </span>
+                                        )}
+
+                                        {/* Remove Button */}
+                                        {canManageUsers && !user.is_owner && (
+                                            <button onClick={() => handleRemoveUser(user.id, user.name)} style={{ background: 'transparent', border: '1px solid #ef4444', color: '#ef4444', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Remove</button>
+                                        )}
+                                    </div>
                                 </li>
                             ))}
                         </ul>
@@ -475,7 +531,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
             </div>
             <div style={{ display: 'flex', gap: '10px' }}>
                 
-                {/* NEW: Install App Button (Only shows if device allows it AND it's not installed yet) */}
+                {/* Install App Button (Only shows if device allows it AND it's not installed yet) */}
                 {installPrompt && (
                     <button 
                         style={{ backgroundColor: '#10b981', color: 'white', border: 'none', padding: isMobile ? '6px 10px' : '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMobile ? '12px' : '14px', boxShadow: '0 4px 6px -1px rgba(16, 185, 129, 0.4)' }} 
@@ -485,13 +541,15 @@ const WorkspaceView = ({ workspace, onBack }) => {
                     </button>
                 )}
 
-                {/* Existing Manage Users Button */}
-                <button 
-                    style={{ backgroundColor: 'white', color: workspace.color, border: 'none', padding: isMobile ? '6px 10px' : '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMobile ? '12px' : '14px' }} 
-                    onClick={() => setIsManagingUsers(true)}
-                >
-                    ⚙️ Manage Access
-                </button>
+                {/* Restricted Manage Users Button */}
+                {canManageUsers && (
+                    <button 
+                        style={{ backgroundColor: 'white', color: workspace.color, border: 'none', padding: isMobile ? '6px 10px' : '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: isMobile ? '12px' : '14px' }} 
+                        onClick={() => setIsManagingUsers(true)}
+                    >
+                        ⚙️ Manage Access
+                    </button>
+                )}
 
                 {/* Existing Back Button */}
                 <button 
@@ -504,8 +562,6 @@ const WorkspaceView = ({ workspace, onBack }) => {
             <div style={{ display: 'flex', gap: '20px', minHeight: '500px' }}>
                 
                 {/* SIDEBAR: FOLDERS */}
-                {/* We apply our new dynamic 'sidebarStyle' here */}
-                {/* UPDATED: Added className="fn-hide-print" */}
                 <div style={sidebarStyle} className="fn-hide-print">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                         <h3 style={{ fontSize: '14px', color: '#64748b', textTransform: 'uppercase', margin: 0 }}>Folders</h3>
@@ -513,33 +569,35 @@ const WorkspaceView = ({ workspace, onBack }) => {
                         {isMobile && (
                             <button onClick={() => setShowMobileSidebar(false)} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#64748b' }}>&times;</button>
                         )}
-                        {!isMobile && (
+                        {!isMobile && canEdit && (
                             <button onClick={() => setIsCreatingFolder(!isCreatingFolder)} style={{ background: 'none', border: 'none', color: workspace.color, cursor: 'pointer', fontSize: '18px', fontWeight: 'bold' }}>+</button>
                         )}
                     </div>
 
-                    {/* Folder Actions */}
-                    <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexDirection: 'column' }}>
-                        {isMobile && (
-                            <button onClick={() => setIsCreatingFolder(!isCreatingFolder)} style={{ width: '100%', backgroundColor: 'transparent', border: `1px dashed ${workspace.color}`, color: workspace.color, padding: '8px', borderRadius: '4px' }}>+ New Folder</button>
-                        )}
-                        
-                        {/* THE IMPORT BUTTON */}
-                        <input 
-                            type="file" 
-                            accept=".json" 
-                            ref={fileInputRef} 
-                            style={{ display: 'none' }} 
-                            onChange={handleFileChange} 
-                        />
-                        <button 
-                            onClick={() => fileInputRef.current && fileInputRef.current.click()} 
-                            disabled={isImporting}
-                            style={{ width: '100%', backgroundColor: 'white', border: '1px solid #cbd5e1', color: '#64748b', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                        >
-                            {isImporting ? 'Importing...' : '↑ Upload Template'}
-                        </button>
-                    </div>
+                    {/* Folder Actions (Restricted to Editors) */}
+                    {canEdit && (
+                        <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexDirection: 'column' }}>
+                            {isMobile && (
+                                <button onClick={() => setIsCreatingFolder(!isCreatingFolder)} style={{ width: '100%', backgroundColor: 'transparent', border: `1px dashed ${workspace.color}`, color: workspace.color, padding: '8px', borderRadius: '4px' }}>+ New Folder</button>
+                            )}
+                            
+                            {/* THE IMPORT BUTTON */}
+                            <input 
+                                type="file" 
+                                accept=".json" 
+                                ref={fileInputRef} 
+                                style={{ display: 'none' }} 
+                                onChange={handleFileChange} 
+                            />
+                            <button 
+                                onClick={() => fileInputRef.current && fileInputRef.current.click()} 
+                                disabled={isImporting}
+                                style={{ width: '100%', backgroundColor: 'white', border: '1px solid #cbd5e1', color: '#64748b', padding: '8px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                            >
+                                {isImporting ? 'Importing...' : '↑ Upload Template'}
+                            </button>
+                        </div>
+                    )}
 
                     {isCreatingFolder && (
                         <form onSubmit={(e) => handleCreateItem(e, true)} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '15px' }}>
@@ -588,6 +646,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
                             folderId={selectedFolder.id}
                             workspaceColor={workspace.color} 
                             onClose={() => setActiveNoteId(null)} 
+                            canEdit={canEdit} // <--- Pass permissions into the NoteEditor
                             onNoteCreated={(newNote) => {
                                 setItems([...items, newNote]);
                                 setActiveNoteId(newNote.id);
@@ -595,7 +654,7 @@ const WorkspaceView = ({ workspace, onBack }) => {
                             onNoteUpdated={(id, newTitle) => {
                                 setItems(items.map(item => item.id === id ? { ...item, title: newTitle } : item));
                             }}
-                            // NEW: Catch the new template and add it to the dropdown state
+                            // Catch the new template and add it to the dropdown state
                             onTemplateSaved={(newTemplate) => {
                                 setTemplates([...templates, newTemplate]);
                             }}
@@ -633,8 +692,8 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                     ))}
                                 </div>
 
-                                {/* Show a helpful button if there are no folders yet */}
-                                {folders.length === 0 && (
+                                {/* Show a helpful button if there are no folders yet (Restricted) */}
+                                {folders.length === 0 && canEdit && (
                                     <div style={{ textAlign: 'center', marginTop: '30px' }}>
                                         <button 
                                             onClick={() => isMobile ? setShowMobileSidebar(true) : setIsCreatingFolder(true)} 
@@ -650,19 +709,27 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                 <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', borderBottom: '2px solid #f1f5f9', paddingBottom: '15px', marginBottom: '20px', gap: '10px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                                         <h3 style={{ margin: 0, fontSize: '24px', color: '#1e293b' }}>{selectedFolder.title}</h3>
-                                        <div style={{ display: 'flex', gap: '5px' }}>
-                                            <button onClick={handleRenameFolder} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#94a3b8' }} title="Rename Folder">✏️</button>
-                                            <button onClick={handleDeleteFolder} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#ef4444' }} title="Delete Folder">🗑️</button>
-                                        </div>
+                                        
+                                        {/* Folder Rename/Delete (Restricted) */}
+                                        {canEdit && (
+                                            <div style={{ display: 'flex', gap: '5px' }}>
+                                                <button onClick={handleRenameFolder} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#94a3b8' }} title="Rename Folder">✏️</button>
+                                                <button onClick={handleDeleteFolder} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#ef4444' }} title="Delete Folder">🗑️</button>
+                                            </div>
+                                        )}
                                     </div>
                                     
                                     <div style={{ display: 'flex', gap: '10px', width: isMobile ? '100%' : 'auto', flexDirection: isMobile ? 'column' : 'row' }}>
                                         <button onClick={handleExportFolder} style={{ backgroundColor: 'white', color: '#64748b', border: '1px solid #cbd5e1', padding: '10px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', width: isMobile ? '100%' : 'auto' }}>
                                             ↓ Export Template
                                         </button>
-                                        <button onClick={() => setIsCreatingNote(!isCreatingNote)} style={{ backgroundColor: workspace.color, color: headerTextColor, border: 'none', padding: '10px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', width: isMobile ? '100%' : 'auto' }}>
-                                            + New Note
-                                        </button>
+                                        
+                                        {/* Create Note Button (Restricted) */}
+                                        {canEdit && (
+                                            <button onClick={() => setIsCreatingNote(!isCreatingNote)} style={{ backgroundColor: workspace.color, color: headerTextColor, border: 'none', padding: '10px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', width: isMobile ? '100%' : 'auto' }}>
+                                                + New Note
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
 					
@@ -709,23 +776,28 @@ const WorkspaceView = ({ workspace, onBack }) => {
                                                 </div>
                                                 
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); setActionNote({ id: note.id, type: 'copy' }); }} 
-                                                        style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '5px 8px', cursor: 'pointer', color: '#10b981' }}
-                                                        title="Copy Note"
-                                                    >⎘ Copy</button>
+                                                    {/* Note Item Actions (Restricted) */}
+                                                    {canEdit && (
+                                                        <>
+                                                            <button 
+                                                                onClick={(e) => { e.stopPropagation(); setActionNote({ id: note.id, type: 'copy' }); }} 
+                                                                style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '5px 8px', cursor: 'pointer', color: '#10b981' }}
+                                                                title="Copy Note"
+                                                            >⎘ Copy</button>
 
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); setActionNote({ id: note.id, type: 'move' }); }} 
-                                                        style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '5px 8px', cursor: 'pointer', color: '#0284c7' }}
-                                                        title="Move Note"
-                                                    >➡️ Move</button>
+                                                            <button 
+                                                                onClick={(e) => { e.stopPropagation(); setActionNote({ id: note.id, type: 'move' }); }} 
+                                                                style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '5px 8px', cursor: 'pointer', color: '#0284c7' }}
+                                                                title="Move Note"
+                                                            >➡️ Move</button>
 
-                                                    <button 
-                                                        onClick={(e) => handleDeleteNote(e, note.id, note.title)} 
-                                                        style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '5px 8px', cursor: 'pointer', color: '#ef4444' }}
-                                                        title="Delete Note"
-                                                    >🗑️</button>
+                                                            <button 
+                                                                onClick={(e) => handleDeleteNote(e, note.id, note.title)} 
+                                                                style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '5px 8px', cursor: 'pointer', color: '#ef4444' }}
+                                                                title="Delete Note"
+                                                            >🗑️</button>
+                                                        </>
+                                                    )}
                                                     <span style={{ color: workspace.color, fontWeight: 'bold', fontSize: '20px', marginLeft: '5px' }}>&rarr;</span>
                                                 </div>
                                             </div>

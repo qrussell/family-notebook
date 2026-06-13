@@ -106,7 +106,10 @@ function fn_register_api_endpoints() {
     register_rest_route( 'family-notebook/v1', '/templates', [['methods' => 'GET', 'callback' => 'fn_api_get_templates', 'permission_callback' => 'is_user_logged_in'], ['methods' => 'POST', 'callback' => 'fn_api_save_template', 'permission_callback' => 'is_user_logged_in']]);
     register_rest_route( 'family-notebook/v1', '/templates/(?P<id>\d+)', ['methods' => 'DELETE', 'callback' => 'fn_api_delete_template', 'permission_callback' => 'is_user_logged_in']);
     register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)/users', [['methods' => 'GET', 'callback' => 'fn_api_get_workspace_users', 'permission_callback' => 'is_user_logged_in'], ['methods' => 'POST', 'callback' => 'fn_api_add_workspace_user', 'permission_callback' => 'is_user_logged_in']]);
-    register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)/users/(?P<user_id>\d+)', ['methods' => 'DELETE', 'callback' => 'fn_api_remove_workspace_user', 'permission_callback' => 'is_user_logged_in']);
+    register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)/users/(?P<user_id>\d+)', [
+        ['methods' => 'DELETE', 'callback' => 'fn_api_remove_workspace_user', 'permission_callback' => 'is_user_logged_in'],
+        ['methods' => 'PUT', 'callback' => 'fn_api_update_workspace_user_role', 'permission_callback' => 'is_user_logged_in'] // NEW: Update Role
+    ]);
     
     // NEW: Copy Note Route
     register_rest_route( 'family-notebook/v1', '/notes/(?P<id>\d+)/copy', [
@@ -244,10 +247,11 @@ function fn_api_update_note($request) {
         $update_data['post_title'] = sanitize_text_field($p['title']);
     }
     if ( isset($p['content']) ) {
-        $update_data['post_content'] = wp_json_encode($p['content']);
+        // CRITICAL FIX: Added wp_slash() to protect the JSON formatting
+        $update_data['post_content'] = wp_slash(wp_json_encode($p['content']));
     }
     if ( isset($p['parent_id']) ) {
-        $update_data['post_parent'] = intval($p['parent_id']); // This moves the note
+        $update_data['post_parent'] = intval($p['parent_id']); 
     }
 
     wp_update_post($update_data);
@@ -412,6 +416,7 @@ function fn_api_get_workspace_users($request) {
                 'id' => (int)$row['id'],
                 'name' => $row['name'],
                 'email' => $row['email'],
+                'role' => $row['app_role'], // <-- NEW: Send the exact role to React
                 'is_owner' => ($row['app_role'] === 'owner')
             ];
         }
@@ -486,22 +491,33 @@ function fn_api_add_workspace_user($request) {
     return rest_ensure_response(['success' => true, 'status' => 'added_existing_user']);
 }
 
-function fn_api_remove_workspace_user($request) {
+function fn_api_update_workspace_user_role($request) {
     global $wpdb;
     $ws = intval($request['id']);
-    $rem = intval($request['user_id']);
+    $target_user_id = intval($request['user_id']);
     $current_user_id = get_current_user_id();
+    
+    $params = $request->get_json_params();
+    $new_role = sanitize_text_field($params['role']);
 
-    // Verify the user requesting the deletion is the owner (or the user removing themselves)
+    // 1. Validate the role
+    $allowed_roles = ['owner', 'organizer', 'user', 'viewer'];
+    if (!in_array($new_role, $allowed_roles)) return new WP_Error('invalid', 'Invalid role', ['status' => 400]);
+
+    // 2. Verify the CURRENT user is an owner or organizer
     $table_members = $wpdb->prefix . 'fn_workspace_members';
-    $role = $wpdb->get_var($wpdb->prepare("SELECT app_role FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $current_user_id));
+    $current_user_role = $wpdb->get_var($wpdb->prepare("SELECT app_role FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $current_user_id));
 
-    if ($role !== 'owner' && $current_user_id !== $rem) {
-        return new WP_Error('forbidden', 'Only the workspace owner can remove members.', ['status' => 403]);
+    if (!in_array($current_user_role, ['owner', 'organizer'])) {
+        return new WP_Error('forbidden', 'You do not have permission to change roles.', ['status' => 403]);
     }
 
-    // Delete directly from the custom SQL table
-    $wpdb->delete($table_members, ['workspace_id' => $ws, 'user_id' => $rem]);
+    // 3. Update the role in the database
+    $wpdb->update(
+        $table_members,
+        ['app_role' => $new_role],
+        ['workspace_id' => $ws, 'user_id' => $target_user_id]
+    );
 
     return rest_ensure_response(['success' => true]);
 }
