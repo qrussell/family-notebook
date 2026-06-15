@@ -1,6 +1,25 @@
 import { __ } from '@wordpress/i18n';
 import { useState } from '@wordpress/element';
 
+// Helper function to safely format ANY database color string
+const formatColorForPicker = (hexColor) => {
+    if (!hexColor || typeof hexColor !== 'string') return '#1e293b';
+    let cleanHex = hexColor.replace(/[^0-9a-fA-F]/g, '');
+    if (cleanHex.length === 3) cleanHex = cleanHex.split('').map(char => char + char).join('');
+    if (cleanHex.length !== 6) return '#1e293b';
+    return '#' + cleanHex;
+};
+
+// Helper function to calculate accessibility contrast dynamically
+const getContrastTextColor = (hexColor) => {
+    const safeHex = formatColorForPicker(hexColor);
+    const r = parseInt(safeHex.slice(1, 3), 16);
+    const g = parseInt(safeHex.slice(3, 5), 16);
+    const b = parseInt(safeHex.slice(5, 7), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.5 ? '#0f172a' : '#ffffff';
+};
+
 const WorkspaceList = ({ workspaces, onSelect, onCreateWorkspace }) => {
     const [isCreating, setIsCreating] = useState(false);
     const [newName, setNewName] = useState('');
@@ -20,22 +39,28 @@ const WorkspaceList = ({ workspaces, onSelect, onCreateWorkspace }) => {
         });
     };
 
-    const tileStyle = (color) => ({
-        backgroundColor: color,
-        color: 'white',
-        padding: '20px',
-        borderRadius: '8px',
-        marginBottom: '10px',
-        cursor: 'pointer',
-        fontWeight: 'bold',
-        fontSize: '18px',
-        transition: 'transform 0.2s',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '100px',
-        width: '200px'
-    });
+    // Calculate dynamic styles for each workspace tile
+    const tileStyle = (color) => {
+        const safeBgColor = formatColorForPicker(color);
+        const dynamicTextColor = getContrastTextColor(safeBgColor);
+
+        return {
+            backgroundColor: safeBgColor,
+            color: dynamicTextColor,
+            padding: '20px',
+            borderRadius: '8px',
+            marginBottom: '10px',
+            cursor: 'pointer',
+            fontWeight: 'bold',
+            fontSize: '18px',
+            transition: 'transform 0.2s',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '100px',
+            width: '200px'
+        };
+    };
 
     const newTileStyle = {
         ...tileStyle('#f1f5f9'),

@@ -113,6 +113,10 @@ function fn_register_api_endpoints() {
         ['methods' => 'DELETE', 'callback' => 'fn_api_remove_workspace_user', 'permission_callback' => 'is_user_logged_in'],
         ['methods' => 'PUT', 'callback' => 'fn_api_update_workspace_user_role', 'permission_callback' => 'is_user_logged_in'] // NEW: Update Role
     ]);
+	register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)', [
+		['methods' => 'PUT', 'callback' => 'fn_api_update_workspace', 'permission_callback' => 'is_user_logged_in'],
+		['methods' => 'DELETE', 'callback' => 'fn_api_delete_workspace', 'permission_callback' => 'is_user_logged_in']
+	]);
     
     // NEW: Copy Note Route
     register_rest_route( 'family-notebook/v1', '/notes/(?P<id>\d+)/copy', [
@@ -202,6 +206,24 @@ function fn_api_create_workspace($request) {
         'color' => $params['color'], 
         'role' => 'owner'
     ]);
+}
+
+function fn_api_remove_workspace_user($request) {
+    global $wpdb;
+    $ws = intval($request['id']);
+    $target_user_id = intval($request['user_id']);
+    $current_user_id = get_current_user_id();
+    
+    // Verify CURRENT user is an owner or organizer (or they are leaving the workspace themselves)
+    $table_members = $wpdb->prefix . 'fn_workspace_members';
+    $current_user_role = $wpdb->get_var($wpdb->prepare("SELECT app_role FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $current_user_id));
+
+    if (!in_array($current_user_role, ['owner', 'organizer']) && $current_user_id !== $target_user_id) {
+        return new WP_Error('forbidden', __('You do not have permission to remove users.', 'family-notebook'), ['status' => 403]);
+    }
+
+    $wpdb->delete($table_members, ['workspace_id' => $ws, 'user_id' => $target_user_id]);
+    return rest_ensure_response(['success' => true]);
 }
 
 function fn_api_get_notes($request) {
@@ -541,7 +563,42 @@ function fn_api_update_workspace_user_role($request) {
 
     return rest_ensure_response(['success' => true]);
 }
+function fn_api_update_workspace($request) {
+    global $wpdb;
+    $ws = intval($request['id']);
+    $params = $request->get_json_params();
+    
+    // Validate Ownership
+    $current_user_id = get_current_user_id();
+    $role = $wpdb->get_var($wpdb->prepare("SELECT app_role FROM {$wpdb->prefix}fn_workspace_members WHERE workspace_id = %d AND user_id = %d", $ws, $current_user_id));
+    if ($role !== 'owner') return new WP_Error( '403', __('Only owners can edit workspaces.', 'family-notebook') );
 
+    $update = [];
+    if(isset($params['name'])) $update['workspace_name'] = sanitize_text_field($params['name']);
+    if(isset($params['color'])) $update['theme_color'] = sanitize_hex_color($params['color']);
+
+    if(!empty($update)) {
+        $wpdb->update($wpdb->prefix . 'fn_workspaces', $update, ['id' => $ws]);
+    }
+    return rest_ensure_response(['success' => true]);
+}
+
+function fn_api_delete_workspace($request) {
+    global $wpdb;
+    $ws = intval($request['id']);
+    
+    $current_user_id = get_current_user_id();
+    $role = $wpdb->get_var($wpdb->prepare("SELECT app_role FROM {$wpdb->prefix}fn_workspace_members WHERE workspace_id = %d AND user_id = %d", $ws, $current_user_id));
+    if ($role !== 'owner') return new WP_Error( '403', __('Only owners can delete workspaces.', 'family-notebook') );
+
+    $wpdb->delete($wpdb->prefix . 'fn_workspaces', ['id' => $ws]);
+    $wpdb->delete($wpdb->prefix . 'fn_workspace_members', ['workspace_id' => $ws]);
+    
+    $notes = get_posts(['post_type' => 'fn_note_page', 'meta_key' => '_fn_workspace_id', 'meta_value' => $ws, 'posts_per_page' => -1]);
+    foreach($notes as $n) wp_delete_post($n->ID, true);
+
+    return rest_ensure_response(['deleted' => true]);
+}
 // 7. Admin Panel
 add_action( 'admin_menu', 'fn_register_admin_menu' );
 function fn_register_admin_menu() {
@@ -631,7 +688,32 @@ function fn_render_admin_settings() {
                 </td>
             </tr>
         </table>
-        
+        <hr style="margin: 40px 0;">
+		<h2><?php esc_html_e('Emergency Workspace Reassignment', 'family-notebook'); ?></h2>
+		<p><?php esc_html_e('If an owner is deleted from your WordPress site, use this tool to assign a workspace to a new user account.', 'family-notebook'); ?></p>
+		<form action="<?php echo esc_url(admin_url('admin-post.php')); ?>" method="post">
+			<input type="hidden" name="action" value="fn_reassign_workspace">
+			<?php wp_nonce_field('fn_reassign_nonce'); ?>
+			<table class="form-table">
+				<tr valign="top">
+					<th scope="row"><?php esc_html_e('Select Workspace', 'family-notebook'); ?></th>
+					<td>
+						<select name="fn_workspace_id" style="width: 100%; max-width: 400px;" required>
+							<?php foreach($workspaces as $ws): ?>
+								<option value="<?php echo esc_attr($ws->id); ?>"><?php echo esc_html($ws->workspace_name); ?></option>
+							<?php endforeach; ?>
+						</select>
+					</td>
+				</tr>
+				<tr valign="top">
+					<th scope="row"><?php esc_html_e('New Owner Email', 'family-notebook'); ?></th>
+					<td>
+						<input type="email" name="fn_new_owner_email" required style="width: 100%; max-width: 400px;" placeholder="user@domain.com" />
+					</td>
+				</tr>
+			</table>
+			<?php submit_button(__('Assign New Owner', 'family-notebook'), 'secondary'); ?>
+		</form>
     </div>
     <?php
 }
@@ -733,6 +815,30 @@ function fn_serve_pwa_assets() {
         ";
         exit;
     }
+}
+add_action('admin_post_fn_reassign_workspace', 'fn_reassign_workspace');
+function fn_reassign_workspace() {
+    if (!current_user_can('manage_options')) wp_die(__('Unauthorized', 'family-notebook'));
+    check_admin_referer('fn_reassign_nonce');
+
+    global $wpdb;
+    $ws_id = intval($_POST['fn_workspace_id']);
+    $email = sanitize_email($_POST['fn_new_owner_email']);
+    $user = get_user_by('email', $email);
+
+    if (!$user) wp_die(__('User not found with that email.', 'family-notebook'));
+
+    // Check if they are already a member, if so upgrade them. If not, insert them.
+    $table = $wpdb->prefix . 'fn_workspace_members';
+    $existing = $wpdb->get_var($wpdb->prepare("SELECT id FROM $table WHERE workspace_id = %d AND user_id = %d", $ws_id, $user->ID));
+
+    if ($existing) {
+        $wpdb->update($table, ['app_role' => 'owner'], ['id' => $existing]);
+    } else {
+        $wpdb->insert($table, ['workspace_id' => $ws_id, 'user_id' => $user->ID, 'app_role' => 'owner']);
+    }
+
+    wp_redirect(admin_url('admin.php?page=family-notebook&message=reassigned')); exit;
 }
 // 8. Auth Gate & Shortcode
 add_shortcode( 'family_notebook_app', 'fn_render_app_shortcode' );
@@ -858,43 +964,29 @@ function fn_create_custom_tables() {
 
 add_action('admin_post_fn_export_app_data', 'fn_export_app_data');
 function fn_export_app_data() {
-    // Security check: Only admins can download the entire app database
     if (!current_user_can('manage_options')) wp_die(__('Unauthorized', 'family-notebook'));
-    
     global $wpdb;
 
-    // 1. Setup the Backup Array
     $data = [
         'version' => '1.0.0',
         'export_date' => current_time('mysql'),
         'workspaces' => $wpdb->get_results("SELECT id, workspace_name, theme_color, join_code FROM {$wpdb->prefix}fn_workspaces", ARRAY_A),
+        // NEW: Grab members with their emails
+        'members' => $wpdb->get_results("SELECT m.workspace_id, m.app_role, u.user_email FROM {$wpdb->prefix}fn_workspace_members m INNER JOIN {$wpdb->users} u ON m.user_id = u.ID", ARRAY_A),
         'notes' => [],
         'templates' => []
     ];
 
-    // 2. Fetch all Notes and Folders
     $notes = get_posts(['post_type' => 'fn_note_page', 'posts_per_page' => -1, 'post_status' => 'any']);
     foreach($notes as $n) {
-        $data['notes'][] = [
-            'old_id' => $n->ID, // We need this to reconstruct the folder hierarchy later!
-            'title' => $n->post_title,
-            'content' => $n->post_content,
-            'parent_id' => $n->post_parent,
-            'workspace_id' => get_post_meta($n->ID, '_fn_workspace_id', true)
-        ];
+        $data['notes'][] = ['old_id' => $n->ID, 'title' => $n->post_title, 'content' => $n->post_content, 'parent_id' => $n->post_parent, 'workspace_id' => get_post_meta($n->ID, '_fn_workspace_id', true)];
     }
 
-    // 3. Fetch all Library Templates
     $templates = get_posts(['post_type' => 'fn_template', 'posts_per_page' => -1, 'post_status' => 'any']);
     foreach($templates as $t) {
-        $data['templates'][] = [
-            'title' => $t->post_title,
-            'content' => $t->post_content,
-            'workspace_id' => get_post_meta($t->ID, '_fn_workspace_id', true)
-        ];
+        $data['templates'][] = ['title' => $t->post_title, 'content' => $t->post_content, 'workspace_id' => get_post_meta($t->ID, '_fn_workspace_id', true)];
     }
 
-    // 4. Force browser to download the JSON file
     header('Content-Type: application/json');
     header('Content-Disposition: attachment; filename="family-notebook-full-backup-' . date('Y-m-d') . '.json"');
     echo wp_json_encode($data);
@@ -903,113 +995,80 @@ function fn_export_app_data() {
 
 add_action('admin_post_fn_import_app_data', 'fn_import_app_data');
 function fn_import_app_data() {
-    // 1. Security Check
     if (!current_user_can('manage_options')) wp_die(__('Unauthorized', 'family-notebook'));
     check_admin_referer('fn_import_nonce');
 
-    // 2. Validate File Upload
-    if (empty($_FILES['fn_import_file']['tmp_name'])) {
-        wp_die(__('No file uploaded.', 'family-notebook'));
-    }
-
+    if (empty($_FILES['fn_import_file']['tmp_name'])) wp_die(__('No file uploaded.', 'family-notebook'));
     $json_data = file_get_contents($_FILES['fn_import_file']['tmp_name']);
     $data = json_decode($json_data, true);
 
-    if (!$data || !isset($data['version']) || !isset($data['workspaces'])) {
-        wp_die(__('Invalid Backup File.', 'family-notebook'));
-    }
+    if (!$data || !isset($data['version']) || !isset($data['workspaces'])) wp_die(__('Invalid Backup File.', 'family-notebook'));
 
     global $wpdb;
     $current_user_id = get_current_user_id();
-    
-    // Translation Dictionaries (Old ID => New ID)
-    $workspace_map = [];
-    $note_map = [];
-    $notes_to_relink = []; // Stores notes that need parents attached after the first pass
+    $workspace_map = []; $note_map = []; $notes_to_relink = [];
 
-    // ==========================================
-    // PHASE 1: Import Workspaces & Assign Ownership
-    // ==========================================
+    // Phase 1: Import Workspaces
     if (!empty($data['workspaces'])) {
         foreach ($data['workspaces'] as $ws) {
             $wpdb->insert($wpdb->prefix . 'fn_workspaces', [
                 'workspace_name' => sanitize_text_field($ws['workspace_name']),
                 'theme_color'    => sanitize_text_field($ws['theme_color']),
-                'join_code'      => strtoupper(substr(md5(uniqid(rand(), true)), 0, 8)), // Generate fresh join codes
+                'join_code'      => strtoupper(substr(md5(uniqid(rand(), true)), 0, 8)),
                 'created_by'     => $current_user_id
             ]);
-            
-            $new_ws_id = $wpdb->insert_id;
-            $workspace_map[$ws['id']] = $new_ws_id;
-
-            // Make the admin who is importing the file the Owner of the new workspace
-            $wpdb->insert($wpdb->prefix . 'fn_workspace_members', [
-                'workspace_id' => $new_ws_id,
-                'user_id'      => $current_user_id,
-                'app_role'     => 'owner'
-            ]);
+            $workspace_map[$ws['id']] = $wpdb->insert_id;
         }
     }
 
-    // ==========================================
-    // PHASE 2: Import Templates
-    // ==========================================
+    // Phase 1.5: Relink Members by Email
+    if (!empty($data['members'])) {
+        foreach ($data['members'] as $mem) {
+            if(!isset($workspace_map[$mem['workspace_id']])) continue;
+            
+            $user = get_user_by('email', sanitize_email($mem['user_email']));
+            if($user) {
+                $wpdb->insert($wpdb->prefix . 'fn_workspace_members', [
+                    'workspace_id' => $workspace_map[$mem['workspace_id']],
+                    'user_id'      => $user->ID,
+                    'app_role'     => sanitize_text_field($mem['app_role'])
+                ]);
+            }
+        }
+    }
+
+    // Fallback: Ensure every workspace has an owner (assign importing admin if original owner missing)
+    foreach($workspace_map as $old_id => $new_id) {
+        $has_owner = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}fn_workspace_members WHERE workspace_id = %d AND app_role = 'owner'", $new_id));
+        if ($has_owner == 0) {
+            $wpdb->insert($wpdb->prefix . 'fn_workspace_members', ['workspace_id' => $new_id, 'user_id' => $current_user_id, 'app_role' => 'owner']);
+        }
+    }
+
+    // Phase 2: Import Templates
     if (!empty($data['templates'])) {
         foreach ($data['templates'] as $t) {
-            $new_template_id = wp_insert_post([
-                'post_title'   => sanitize_text_field($t['title']),
-                'post_content' => wp_slash($t['content']), // PROTECT JSON!
-                'post_type'    => 'fn_template',
-                'post_status'  => 'publish'
-            ]);
-
+            $new_template_id = wp_insert_post(['post_title' => sanitize_text_field($t['title']), 'post_content' => wp_slash($t['content']), 'post_type' => 'fn_template', 'post_status' => 'publish']);
             $new_ws_id = isset($workspace_map[$t['workspace_id']]) ? $workspace_map[$t['workspace_id']] : 0;
             update_post_meta($new_template_id, '_fn_workspace_id', $new_ws_id);
         }
     }
 
-    // ==========================================
-    // PHASE 3: Import Notes (Pass 1 - Insertion)
-    // ==========================================
+    // Phase 3 & 4: Import Notes & Hierarchies
     if (!empty($data['notes'])) {
         foreach ($data['notes'] as $n) {
-            $new_note_id = wp_insert_post([
-                'post_title'   => sanitize_text_field($n['title']),
-                'post_content' => wp_slash($n['content']), // PROTECT JSON!
-                'post_type'    => 'fn_note_page',
-                'post_status  ' => 'publish',
-                'post_parent'  => 0 // Default to zero for now
-            ]);
-
-            // Save mapping and metadata
+            $new_note_id = wp_insert_post(['post_title' => sanitize_text_field($n['title']), 'post_content' => wp_slash($n['content']), 'post_type' => 'fn_note_page', 'post_status' => 'publish', 'post_parent' => 0]);
             $note_map[$n['old_id']] = $new_note_id;
-            
             $new_ws_id = isset($workspace_map[$n['workspace_id']]) ? $workspace_map[$n['workspace_id']] : 0;
             update_post_meta($new_note_id, '_fn_workspace_id', $new_ws_id);
-
-            // If it had a parent, queue it for Phase 4
-            if ($n['parent_id'] > 0) {
-                $notes_to_relink[$new_note_id] = $n['parent_id'];
-            }
+            if ($n['parent_id'] > 0) $notes_to_relink[$new_note_id] = $n['parent_id'];
         }
     }
-
-    // ==========================================
-    // PHASE 4: Relink Note Hierarchies (Pass 2)
-    // ==========================================
     foreach ($notes_to_relink as $new_child_id => $old_parent_id) {
-        // If the old parent was successfully imported, we attach the child to the new parent ID
-        if (isset($note_map[$old_parent_id])) {
-            wp_update_post([
-                'ID' => $new_child_id,
-                'post_parent' => $note_map[$old_parent_id]
-            ]);
-        }
+        if (isset($note_map[$old_parent_id])) wp_update_post(['ID' => $new_child_id, 'post_parent' => $note_map[$old_parent_id]]);
     }
 
-    // Redirect back to settings page with a success flag
-    wp_redirect(admin_url('admin.php?page=family-notebook&import=success'));
-    exit;
+    wp_redirect(admin_url('admin.php?page=family-notebook&import=success')); exit;
 }
 
 // ==========================================
