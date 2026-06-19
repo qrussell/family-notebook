@@ -840,10 +840,31 @@ function fn_reassign_workspace() {
 
     wp_redirect(admin_url('admin.php?page=family-notebook&message=reassigned')); exit;
 }
+/**
+ * 9. Inject iOS PWA Meta Tags (Apple Touch Icon)
+ */
+add_action('wp_head', 'fn_inject_pwa_meta_tags');
+function fn_inject_pwa_meta_tags() {
+    global $post;
+    // Only inject on pages rendering the app
+    if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'family_notebook_app' ) ) {
+        $icon_url = FN_PLUGIN_URL . 'assets/icon-192.png';
+        
+        echo "\n";
+        // Force iOS to use your specific app icon
+        echo '<link rel="apple-touch-icon" href="' . esc_url($icon_url) . '">' . "\n";
+        // Tell iOS this is a capable web app
+        echo '<meta name="apple-mobile-web-app-capable" content="yes">' . "\n";
+        // Make the status bar blend in with the app
+        echo '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">' . "\n";
+        echo '<meta name="apple-mobile-web-app-title" content="Notebook">' . "\n";
+    }
+}
 // 8. Auth Gate & Shortcode
 add_shortcode( 'family_notebook_app', 'fn_render_app_shortcode' );
 function fn_render_app_shortcode() {
     
+    // NATIVE APP CSS: This ONLY activates when opened via the Home Screen Icon
     // NATIVE APP CSS: This ONLY activates when opened via the Home Screen Icon
     $standalone_css = '
     <style>
@@ -851,46 +872,45 @@ function fn_render_app_shortcode() {
         .fn-native-app-header { display: none; }
 
         @media (display-mode: standalone) {
-            /* 1. Hide Divi and default WordPress headers/footers */
             header, footer, #main-header, #top-header, #main-footer, 
             .et-l-header, .et-l-footer, .site-header, .site-footer {
                 display: none !important;
             }
-            
-            /* 2. Nuke theme spacing so the app is flush to the phone edges */
             html, body, #page-container, #et-main-area, #main-content, 
             .et_pb_section, .et_pb_row, .et_pb_column, .entry-content {
-                padding: 0 !important;
-                margin: 0 !important;
-                max-width: 100% !important;
-                width: 100% !important;
-                background-color: #f1f5f9 !important; /* Matches your app background */
+                padding: 0 !important; margin: 0 !important; max-width: 100% !important; width: 100% !important; background-color: #f1f5f9 !important;
             }
-
-            /* 3. Show our custom App Header specifically for the installed PWA */
             .fn-native-app-header {
-                display: flex !important;
-                align-items: center;
-                justify-content: center;
-                background-color: #0f172a; /* Slate 900 to match your app theme */
-                color: #ffffff;
-                padding: 15px 20px;
-                /* Push the title down slightly so it avoids the iPhone Notch / Camera Cutout */
-                padding-top: max(15px, env(safe-area-inset-top)); 
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                position: sticky;
-                top: 0;
-                z-index: 999999;
+                display: flex !important; align-items: center; justify-content: center; background-color: #0f172a; color: #ffffff;
+                padding: 15px 20px; padding-top: max(15px, env(safe-area-inset-top)); box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                position: sticky; top: 0; z-index: 999999;
             }
-            .fn-native-app-header h1 {
-                margin: 0 !important;
-                font-size: 20px !important;
-                font-weight: bold !important;
-                color: #ffffff !important;
-                letter-spacing: 0.5px;
-                padding: 0 !important;
-                line-height: 1 !important;
-            }
+        }
+
+        /* NEW: iOS JavaScript Fallback Targeting */
+        body.fn-is-standalone header, body.fn-is-standalone footer, 
+        body.fn-is-standalone #main-header, body.fn-is-standalone #top-header, 
+        body.fn-is-standalone #main-footer, body.fn-is-standalone .et-l-header, 
+        body.fn-is-standalone .et-l-footer, body.fn-is-standalone .site-header, 
+        body.fn-is-standalone .site-footer {
+            display: none !important;
+        }
+        
+        body.fn-is-standalone #page-container, body.fn-is-standalone #et-main-area, 
+        body.fn-is-standalone #main-content, body.fn-is-standalone .et_pb_section, 
+        body.fn-is-standalone .et_pb_row, body.fn-is-standalone .et_pb_column, 
+        body.fn-is-standalone .entry-content {
+            padding: 0 !important; margin: 0 !important; max-width: 100% !important; width: 100% !important; background-color: #f1f5f9 !important;
+        }
+
+        body.fn-is-standalone .fn-native-app-header {
+            display: flex !important; align-items: center; justify-content: center; background-color: #0f172a; color: #ffffff;
+            padding: 15px 20px; padding-top: max(15px, env(safe-area-inset-top)); box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: sticky; top: 0; z-index: 999999;
+        }
+        
+        .fn-native-app-header h1 {
+            margin: 0 !important; font-size: 20px !important; font-weight: bold !important; color: #ffffff !important; letter-spacing: 0.5px; padding: 0 !important; line-height: 1 !important;
         }
     </style>';
 
