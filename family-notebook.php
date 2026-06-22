@@ -83,7 +83,6 @@ function fn_enqueue_react_app() {
                 'rootUrl'   => esc_url_raw( rest_url() ),
                 'nonce'     => wp_create_nonce( 'wp_rest' ),
                 'siteUrl'   => site_url(),
-                // NEW: Pass the plugin directory URL to React
                 'pluginUrl' => FN_PLUGIN_URL, 
             ]);
         }
@@ -111,14 +110,12 @@ function fn_register_api_endpoints() {
     register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)/users', [['methods' => 'GET', 'callback' => 'fn_api_get_workspace_users', 'permission_callback' => 'is_user_logged_in'], ['methods' => 'POST', 'callback' => 'fn_api_add_workspace_user', 'permission_callback' => 'is_user_logged_in']]);
     register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)/users/(?P<user_id>\d+)', [
         ['methods' => 'DELETE', 'callback' => 'fn_api_remove_workspace_user', 'permission_callback' => 'is_user_logged_in'],
-        ['methods' => 'PUT', 'callback' => 'fn_api_update_workspace_user_role', 'permission_callback' => 'is_user_logged_in'] // NEW: Update Role
+        ['methods' => 'PUT', 'callback' => 'fn_api_update_workspace_user_role', 'permission_callback' => 'is_user_logged_in'] 
     ]);
 	register_rest_route( 'family-notebook/v1', '/workspaces/(?P<id>\d+)', [
 		['methods' => 'PUT', 'callback' => 'fn_api_update_workspace', 'permission_callback' => 'is_user_logged_in'],
 		['methods' => 'DELETE', 'callback' => 'fn_api_delete_workspace', 'permission_callback' => 'is_user_logged_in']
 	]);
-    
-    // NEW: Copy Note Route
     register_rest_route( 'family-notebook/v1', '/notes/(?P<id>\d+)/copy', [
         'methods' => 'POST', 
         'callback' => 'fn_api_copy_note', 
@@ -138,7 +135,6 @@ function fn_api_create_workspace($request) {
     $user_id = get_current_user_id();
     $params = $request->get_json_params();
     
-    // 1. Create the New Workspace
     $wpdb->insert($wpdb->prefix . 'fn_workspaces', [
         'workspace_name' => sanitize_text_field($params['name']), 
         'theme_color'    => sanitize_hex_color($params['color']), 
@@ -147,30 +143,23 @@ function fn_api_create_workspace($request) {
     ]);
     $workspace_id = $wpdb->insert_id;
     
-    // 2. Add the creator as the Owner
     $wpdb->insert($wpdb->prefix . 'fn_workspace_members', [
         'workspace_id' => $workspace_id, 
         'user_id'      => $user_id, 
         'app_role'     => 'owner'
     ]);
 
-    // 3. AUTO-PROVISION FROM MASTER WORKSPACE
     $starter_id = intval(get_option('fn_starter_workspace_id', 0));
     
     if ($starter_id > 0 && $starter_id !== $workspace_id) {
-        
-        // Find all root Folders in the starter workspace
         $folders = get_posts([
             'post_type'      => 'fn_note_page',
             'post_parent'    => 0,
             'posts_per_page' => -1,
-            'meta_query'     => [
-                ['key' => '_fn_workspace_id', 'value' => $starter_id, 'compare' => '=']
-            ]
+            'meta_query'     => [['key' => '_fn_workspace_id', 'value' => $starter_id, 'compare' => '=']]
         ]);
 
         foreach ($folders as $folder) {
-            // Duplicate the Folder
             $new_folder_id = wp_insert_post([
                 'post_title'   => $folder->post_title,
                 'post_content' => $folder->post_content,
@@ -179,7 +168,6 @@ function fn_api_create_workspace($request) {
             ]);
             update_post_meta($new_folder_id, '_fn_workspace_id', $workspace_id);
 
-            // Find all Notes inside this specific folder
             $notes = get_posts([
                 'post_type'      => 'fn_note_page',
                 'post_parent'    => $folder->ID,
@@ -187,7 +175,6 @@ function fn_api_create_workspace($request) {
             ]);
 
             foreach ($notes as $note) {
-                // Duplicate the Note and assign it to the new folder
                 $new_note_id = wp_insert_post([
                     'post_title'   => $note->post_title,
                     'post_content' => $note->post_content,
@@ -214,7 +201,6 @@ function fn_api_remove_workspace_user($request) {
     $target_user_id = intval($request['user_id']);
     $current_user_id = get_current_user_id();
     
-    // Verify CURRENT user is an owner or organizer (or they are leaving the workspace themselves)
     $table_members = $wpdb->prefix . 'fn_workspace_members';
     $current_user_role = $wpdb->get_var($wpdb->prepare("SELECT app_role FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $current_user_id));
 
@@ -245,7 +231,6 @@ function fn_api_create_note($request) {
         if ($tpl) $content = json_decode($tpl->post_content, true) ?: [];
     }
     
-    // ADDED: wp_slash() wraps the wp_json_encode string
     $id = wp_insert_post([
         'post_title' => sanitize_text_field($params['title']), 
         'post_type' => 'fn_note_page', 
@@ -255,7 +240,15 @@ function fn_api_create_note($request) {
     ]);
     
     update_post_meta($id, '_fn_workspace_id', $ws);
-    return rest_ensure_response(['id' => $id, 'title' => $params['title'], 'parent_id' => $params['parent_id'] ?? 0, 'content' => $content]);
+    $new_post = get_post($id); // Get fresh object to grab modified date
+
+    return rest_ensure_response([
+        'id' => $id, 
+        'title' => $params['title'], 
+        'parent_id' => $params['parent_id'] ?? 0, 
+        'content' => $content,
+        'last_modified' => $new_post->post_modified
+    ]);
 }
 
 function fn_api_update_note($request) {
@@ -264,21 +257,32 @@ function fn_api_update_note($request) {
     if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     $p = $request->get_json_params();
 
-    $update_data = ['ID' => $id];
-    
-    if ( isset($p['title']) ) {
-        $update_data['post_title'] = sanitize_text_field($p['title']);
-    }
-    if ( isset($p['content']) ) {
-        // ADDED: wp_slash() wrapper
-        $update_data['post_content'] = wp_slash(wp_json_encode($p['content']));
-    }
-    if ( isset($p['parent_id']) ) {
-        $update_data['post_parent'] = intval($p['parent_id']);
+    $current_post = get_post($id);
+
+    // DEEP MERGE CONFLICT DETECTION
+    if (isset($p['last_modified']) && !empty($p['last_modified'])) {
+        if ($current_post->post_modified !== $p['last_modified']) {
+            return new WP_Error('conflict', __('Another user has updated this note since you opened it.', 'family-notebook'), [
+                'status' => 409,
+                'db_modified' => $current_post->post_modified,
+                'server_blocks' => json_decode($current_post->post_content, true)
+            ]);
+        }
     }
 
+    $update_data = ['ID' => $id];
+    
+    if ( isset($p['title']) ) $update_data['post_title'] = sanitize_text_field($p['title']);
+    if ( isset($p['content']) ) $update_data['post_content'] = wp_slash(wp_json_encode($p['content']));
+    if ( isset($p['parent_id']) ) $update_data['post_parent'] = intval($p['parent_id']);
+
     wp_update_post($update_data);
-    return rest_ensure_response(['message' => __('Success', 'family-notebook')]);
+    $updated_post = get_post($id);
+
+    return rest_ensure_response([
+        'message' => __('Success', 'family-notebook'),
+        'last_modified' => $updated_post->post_modified
+    ]);
 }
 
 function fn_api_copy_note($request) {
@@ -294,7 +298,6 @@ function fn_api_copy_note($request) {
     
     $new_post_id = wp_insert_post([
         'post_title'   => $original_post->post_title . ' ' . __('(Copy)', 'family-notebook'),
-        // ADDED: wp_slash() wrapper for copied content
         'post_content' => wp_slash($original_post->post_content),
         'post_status'  => 'publish',
         'post_type'    => 'fn_note_page',
@@ -302,14 +305,15 @@ function fn_api_copy_note($request) {
     ]);
     
     update_post_meta($new_post_id, '_fn_workspace_id', $ws);
-    
+    $new_post = get_post($new_post_id);
     $content = json_decode($original_post->post_content, true) ?: [];
     
     return rest_ensure_response([
         'id' => $new_post_id, 
         'title' => $original_post->post_title . ' ' . __('(Copy)', 'family-notebook'), 
         'parent_id' => $new_parent_id, 
-        'content' => $content
+        'content' => $content,
+        'last_modified' => $new_post->post_modified
     ]);
 }
 
@@ -320,7 +324,13 @@ function fn_api_get_single_note($request) {
     $p = get_post($id);
     $content = json_decode($p->post_content, true);
     if (json_last_error() !== JSON_ERROR_NONE) $content = [[ 'id' => uniqid('blk_'), 'type' => 'rich-text', 'content' => $p->post_content ]];
-    return rest_ensure_response(['id' => $p->ID, 'title' => $p->post_title, 'content' => $content ?: []]);
+    
+    return rest_ensure_response([
+        'id' => $p->ID, 
+        'title' => $p->post_title, 
+        'content' => $content ?: [],
+        'last_modified' => $p->post_modified // Tracked for conflict resolution
+    ]);
 }
 
 function fn_api_delete_note($request) {
@@ -340,13 +350,11 @@ function fn_api_get_templates($request) {
         'posts_per_page' => -1,
         'meta_query'     => [
             'relation' => 'OR',
-            // Get Global templates (meta is 0 or doesn't exist)
             [ 'key' => '_fn_workspace_id', 'value' => [0, ''], 'compare' => 'IN' ],
             [ 'key' => '_fn_workspace_id', 'compare' => 'NOT EXISTS' ]
         ]
     ];
 
-    // If a workspace is provided, also include templates specific to this workspace
     if ($ws_id > 0) {
         $args['meta_query'][] = [
             'key'     => '_fn_workspace_id',
@@ -362,9 +370,8 @@ function fn_api_get_templates($request) {
 function fn_api_save_template( $request ) {
     $params = $request->get_json_params();
     $clean_content = $params['content'];
-    $ws_id = isset($params['workspace_id']) ? intval($params['workspace_id']) : 0; // NEW: Default to 0 (Global) if none provided
+    $ws_id = isset($params['workspace_id']) ? intval($params['workspace_id']) : 0; 
 
-    // Helper function to deep-clean blocks
     $clean_blocks = function(&$blocks) {
         foreach ($blocks as &$block) {
             if (isset($block['items'])) {
@@ -391,9 +398,7 @@ function fn_api_save_template( $request ) {
         'post_status'  => 'publish'
     ]);
     
-    // NEW: Save the template's workspace scope
     update_post_meta($id, '_fn_workspace_id', $ws_id);
-    
     return rest_ensure_response([ 'id' => $id, 'message' => __('Template saved.', 'family-notebook') ]);
 }
 
@@ -402,7 +407,6 @@ function fn_api_delete_template($request) { wp_delete_post(intval($request['id']
 function fn_api_export_template($request) {
     $f_id = intval($request['id']);
     
-    // ADDED: Verify user has access to the workspace where this folder exists
     $ws = intval(get_post_meta($f_id, '_fn_workspace_id', true));
     if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
 
@@ -416,7 +420,6 @@ function fn_api_import_template($request) {
     $p = $request->get_json_params();
     $ws = intval($p['workspace_id']);
     
-    // ADDED: Verify user has access to the target workspace
     if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     
     $tpl = $p['template_data'];
@@ -424,7 +427,7 @@ function fn_api_import_template($request) {
     update_post_meta($f_id, '_fn_workspace_id', $ws);
     $items = [['id' => $f_id, 'title' => $tpl['template_name'].' ' . __('(Imported)', 'family-notebook'), 'parent_id' => 0]];
     foreach($tpl['notes'] as $n) {
-        $nid = wp_insert_post(['post_title' => sanitize_text_field($n['title']), 'post_type' => 'fn_note_page', 'post_status' => 'publish', 'post_parent' => $f_id, 'post_content' => wp_slash(wp_json_encode($n['content']))]); // Added wp_slash here just in case!
+        $nid = wp_insert_post(['post_title' => sanitize_text_field($n['title']), 'post_type' => 'fn_note_page', 'post_status' => 'publish', 'post_parent' => $f_id, 'post_content' => wp_slash(wp_json_encode($n['content']))]); 
         update_post_meta($nid, '_fn_workspace_id', $ws);
         $items[] = ['id' => $nid, 'title' => $n['title'], 'parent_id' => $f_id];
     }
@@ -435,7 +438,6 @@ function fn_api_get_workspace_users($request) {
     global $wpdb;
     $ws = intval($request['id']);
     
-    // ADDED: Verify user is a member before viewing users
     if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
 
     $query = $wpdb->prepare("
@@ -455,7 +457,7 @@ function fn_api_get_workspace_users($request) {
                 'name' => $row['name'],
                 'email' => $row['email'],
                 'is_owner' => ($row['app_role'] === 'owner'),
-                'role' => $row['app_role'] // <-- Make sure this line exists so React knows what role to display!
+                'role' => $row['app_role'] 
             ];
         }
     }
@@ -467,7 +469,6 @@ function fn_api_add_workspace_user($request) {
     global $wpdb;
     $ws = intval($request['id']);
     
-    // ADDED: Verify user is authorized to invite others (ideally an owner, but this prevents random scraping)
     if ( ! fn_is_user_authorized_for_workspace( $ws ) ) return new WP_Error( '403', __('Unauthorized', 'family-notebook') );
     
     $email = sanitize_email($request->get_json_params()['email']);
@@ -501,19 +502,17 @@ function fn_api_add_workspace_user($request) {
         return rest_ensure_response(['success' => true, 'status' => 'invite_sent_to_new_user']);
     }
 
-    // SCENARIO 2: User ALREADY exists
     $table_members = $wpdb->prefix . 'fn_workspace_members';
     $existing = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $u->ID));
 
     if ($existing == 0) {
-        // ADDED: Look for a role in the request, default to viewer if none provided
         $params = $request->get_json_params();
         $requested_role = isset($params['role']) ? sanitize_text_field($params['role']) : 'viewer';
 
         $wpdb->insert($table_members, [
             'workspace_id' => $ws,
             'user_id'      => $u->ID,
-            'app_role'     => $requested_role // CHANGED: Replaced hardcoded 'viewer' string
+            'app_role'     => $requested_role 
         ]);
         
         $message = "
@@ -542,11 +541,9 @@ function fn_api_update_workspace_user_role($request) {
     $params = $request->get_json_params();
     $new_role = sanitize_text_field($params['role']);
 
-    // 1. Validate the role
     $allowed_roles = ['owner', 'organizer', 'user', 'viewer'];
     if (!in_array($new_role, $allowed_roles)) return new WP_Error('invalid', __('Invalid role', 'family-notebook'), ['status' => 400]);
 
-    // 2. Verify the CURRENT user is an owner or organizer
     $table_members = $wpdb->prefix . 'fn_workspace_members';
     $current_user_role = $wpdb->get_var($wpdb->prepare("SELECT app_role FROM $table_members WHERE workspace_id = %d AND user_id = %d", $ws, $current_user_id));
 
@@ -554,7 +551,6 @@ function fn_api_update_workspace_user_role($request) {
         return new WP_Error('forbidden', __('You do not have permission to change roles.', 'family-notebook'), ['status' => 403]);
     }
 
-    // 3. Update the role in the database
     $wpdb->update(
         $table_members,
         ['app_role' => $new_role],
@@ -563,12 +559,12 @@ function fn_api_update_workspace_user_role($request) {
 
     return rest_ensure_response(['success' => true]);
 }
+
 function fn_api_update_workspace($request) {
     global $wpdb;
     $ws = intval($request['id']);
     $params = $request->get_json_params();
     
-    // Validate Ownership
     $current_user_id = get_current_user_id();
     $role = $wpdb->get_var($wpdb->prepare("SELECT app_role FROM {$wpdb->prefix}fn_workspace_members WHERE workspace_id = %d AND user_id = %d", $ws, $current_user_id));
     if ($role !== 'owner') return new WP_Error( '403', __('Only owners can edit workspaces.', 'family-notebook') );
@@ -599,17 +595,17 @@ function fn_api_delete_workspace($request) {
 
     return rest_ensure_response(['deleted' => true]);
 }
+
 // 7. Admin Panel
 add_action( 'admin_menu', 'fn_register_admin_menu' );
 function fn_register_admin_menu() {
     add_menu_page(__('Family Notebook Settings', 'family-notebook'), __('Family Notebook', 'family-notebook'), 'manage_options', 'family-notebook', 'fn_render_admin_settings', 'dashicons-book', 30);
 }
-// Register the setting in the database
-// Register the settings in the database
+
 add_action( 'admin_init', 'fn_register_plugin_settings' );
 function fn_register_plugin_settings() {
     register_setting( 'fn_settings_group', 'fn_app_login_url' );
-    register_setting( 'fn_settings_group', 'fn_starter_workspace_id' ); // NEW: Register starter workspace
+    register_setting( 'fn_settings_group', 'fn_starter_workspace_id' ); 
 }
 
 function fn_render_admin_settings() {
@@ -751,36 +747,26 @@ function fn_render_admin_settings() {
         </div>
     <?php
 }
-/**
- * Catch the join link and set a cookie before any HTML loads
- */
+
 add_action('init', 'fn_capture_join_code');
 function fn_capture_join_code() {
     if (isset($_GET['fn_join']) && !empty($_GET['fn_join'])) {
-        // Set a cookie that lasts for 1 hour to remember what workspace they are trying to join
         setcookie('fn_pending_join_code', sanitize_text_field($_GET['fn_join']), time() + 3600, COOKIEPATH, COOKIE_DOMAIN);
     }
 }
 
-/**
- * Process the join code immediately after a user successfully logs in or registers
- */
 add_action('wp_login', 'fn_process_pending_join_code', 10, 2);
 function fn_process_pending_join_code($user_login, $user) {
     if (isset($_COOKIE['fn_pending_join_code'])) {
         global $wpdb;
         $join_code = sanitize_text_field($_COOKIE['fn_pending_join_code']);
-        
-        // Find the workspace by its join code
         $workspace_id = $wpdb->get_var($wpdb->prepare("SELECT id FROM {$wpdb->prefix}fn_workspaces WHERE join_code = %s", $join_code));
         
         if ($workspace_id) {
-            // Check if they are already a member just in case
             $table_members = $wpdb->prefix . 'fn_workspace_members';
             $existing = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_members WHERE workspace_id = %d AND user_id = %d", $workspace_id, $user->ID));
             
             if ($existing == 0) {
-                // Add them to the workspace as a viewer
                 $wpdb->insert($table_members, [
                     'workspace_id' => $workspace_id,
                     'user_id'      => $user->ID,
@@ -788,64 +774,44 @@ function fn_process_pending_join_code($user_login, $user) {
                 ]);
             }
         }
-        
-        // Clear the cookie so it doesn't process again
         setcookie('fn_pending_join_code', '', time() - 3600, COOKIEPATH, COOKIE_DOMAIN);
     }
 }
-// ==========================================
-// PWA ENGINE: Manifest & Service Worker
-// ==========================================
+
 add_action('parse_request', 'fn_serve_pwa_assets');
 function fn_serve_pwa_assets() {
     $request_uri = $_SERVER['REQUEST_URI'] ?? '';
 
-    // 1. Serve the Manifest
     if (strpos($request_uri, 'fn-manifest.json') !== false) {
         header('Content-Type: application/json');
-        
-        // Grab the exact URL where your app lives from your settings
         $app_url = get_option('fn_app_login_url', site_url());
-        // Extract just the path (e.g., "/family-notebook/") to define the scope
         $app_path = parse_url($app_url, PHP_URL_PATH);
         if (!$app_path) $app_path = '/';
 
         echo wp_json_encode([
-            "id" => "family-notebook-app-v1", // <-- NEW: Explicitly separates this from the Chore Chart
+            "id" => "family-notebook-app-v1", 
             "name" => "Family Notebook",
             "short_name" => "Notebook",
-            "start_url" => $app_url,         // <-- NEW: Forces the app to open on the correct page
-            "scope" => $app_path,             // <-- NEW: Restricts the PWA so it doesn't overlap with other apps
+            "start_url" => $app_url,         
+            "scope" => $app_path,            
             "display" => "standalone",
             "background_color" => "#f1f5f9",
             "theme_color" => "#0f172a",
             "icons" => [
-                [
-                    "src" => FN_PLUGIN_URL . "assets/icon-192.png", 
-                    "sizes" => "192x192",
-                    "type" => "image/png"
-                ],
-                [
-                    "src" => FN_PLUGIN_URL . "assets/icon-512.png", 
-                    "sizes" => "512x512",
-                    "type" => "image/png"
-                ]
+                [ "src" => FN_PLUGIN_URL . "assets/icon-192.png", "sizes" => "192x192", "type" => "image/png" ],
+                [ "src" => FN_PLUGIN_URL . "assets/icon-512.png", "sizes" => "512x512", "type" => "image/png" ]
             ]
         ]);
         exit;
     }
 
-    // 2. Serve the Service Worker
     if (strpos($request_uri, 'fn-sw.js') !== false) {
         header('Content-Type: application/javascript');
-        // Critical: Allows the SW to control the WordPress page even if served from a weird path
         header('Service-Worker-Allowed: /'); 
         echo "
             self.addEventListener('install', (e) => { self.skipWaiting(); });
             self.addEventListener('activate', (e) => { e.waitUntil(clients.claim()); });
-            self.addEventListener('fetch', (e) => { 
-                // Basic pass-through fetch. Advanced offline caching can be added here later.
-            });
+            self.addEventListener('fetch', (e) => { });
         ";
         exit;
     }
@@ -862,7 +828,6 @@ function fn_reassign_workspace() {
 
     if (!$user) wp_die(__('User not found with that email.', 'family-notebook'));
 
-    // Check if they are already a member, if so upgrade them. If not, insert them.
     $table = $wpdb->prefix . 'fn_workspace_members';
     $existing = $wpdb->get_var($wpdb->prepare("SELECT id FROM $table WHERE workspace_id = %d AND user_id = %d", $ws_id, $user->ID));
 
@@ -874,35 +839,25 @@ function fn_reassign_workspace() {
 
     wp_redirect(admin_url('admin.php?page=family-notebook&message=reassigned')); exit;
 }
-/**
- * 9. Inject iOS PWA Meta Tags (Apple Touch Icon)
- */
+
 add_action('wp_head', 'fn_inject_pwa_meta_tags');
 function fn_inject_pwa_meta_tags() {
     global $post;
-    // Only inject on pages rendering the app
     if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'family_notebook_app' ) ) {
         $icon_url = FN_PLUGIN_URL . 'assets/icon-192.png';
-        
         echo "\n";
-        // Force iOS to use your specific app icon
         echo '<link rel="apple-touch-icon" href="' . esc_url($icon_url) . '">' . "\n";
-        // Tell iOS this is a capable web app
         echo '<meta name="apple-mobile-web-app-capable" content="yes">' . "\n";
-        // Make the status bar blend in with the app
         echo '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">' . "\n";
         echo '<meta name="apple-mobile-web-app-title" content="Notebook">' . "\n";
     }
 }
-// 8. Auth Gate & Shortcode
+
 add_shortcode( 'family_notebook_app', 'fn_render_app_shortcode' );
 function fn_render_app_shortcode() {
     
-    // NATIVE APP CSS: This ONLY activates when opened via the Home Screen Icon
-    // NATIVE APP CSS: This ONLY activates when opened via the Home Screen Icon
     $standalone_css = '
     <style>
-        /* Hidden by default on the standard website */
         .fn-native-app-header { display: none; }
 
         @media (display-mode: standalone) {
@@ -921,7 +876,6 @@ function fn_render_app_shortcode() {
             }
         }
 
-        /* NEW: iOS JavaScript Fallback Targeting */
         body.fn-is-standalone header, body.fn-is-standalone footer, 
         body.fn-is-standalone #main-header, body.fn-is-standalone #top-header, 
         body.fn-is-standalone #main-footer, body.fn-is-standalone .et-l-header, 
@@ -950,7 +904,7 @@ function fn_render_app_shortcode() {
 
     if ( ! is_user_logged_in() ) {
         ob_start();
-        echo $standalone_css; // Inject CSS into the login screen too
+        echo $standalone_css; 
         ?>
         <div style="max-width: 400px; margin: 40px auto; padding: 30px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); font-family: sans-serif;">
             <h2 style="text-align: center; color: #1e293b; margin-top: 0; margin-bottom: 25px;"><?php esc_html_e('Family Notebook', 'family-notebook'); ?></h2>
@@ -991,7 +945,6 @@ function fn_render_app_shortcode() {
         return ob_get_clean();
     }
     
-    // Inject CSS and the Custom App Header into the main app experience
     return $standalone_css . '
         <div class="fn-native-app-header">
             <h1>' . esc_html__('Family Notebook', 'family-notebook') . '</h1>
@@ -999,10 +952,6 @@ function fn_render_app_shortcode() {
         <div id="family-notebook-root">' . esc_html__('Loading...', 'family-notebook') . '</div>
     ';
 }
-
-// ==========================================
-// PLUGIN ACTIVATION & STARTER KIT PROVISIONING
-// ==========================================
 
 register_activation_hook( __FILE__, 'fn_plugin_activation' );
 function fn_plugin_activation() {
@@ -1012,12 +961,9 @@ function fn_plugin_activation() {
 
 function fn_install_bundled_starter_kit() {
     global $wpdb;
-    
-    // 1. Check if a starter workspace is already assigned (prevents duplicate installs)
     $existing_starter = get_option('fn_starter_workspace_id', 0);
     if ($existing_starter > 0) return;
 
-    // 2. Look for the bundled JSON file
     $json_path = FN_PLUGIN_DIR . 'assets/starter-kit.json';
     if (!file_exists($json_path)) return;
 
@@ -1026,7 +972,6 @@ function fn_install_bundled_starter_kit() {
 
     if (!$data || empty($data['workspaces'])) return;
 
-    // 3. Find an Admin to assign as the owner of the Starter Kit
     $admin_users = get_users(['role' => 'administrator', 'number' => 1]);
     $owner_id = !empty($admin_users) ? $admin_users[0]->ID : 1;
 
@@ -1034,7 +979,6 @@ function fn_install_bundled_starter_kit() {
     $note_map = []; 
     $notes_to_relink = [];
 
-    // 4. Import the FIRST workspace from the JSON backup as the Starter Kit
     $ws = $data['workspaces'][0];
     
     $wpdb->insert($wpdb->prefix . 'fn_workspaces', [
@@ -1047,17 +991,14 @@ function fn_install_bundled_starter_kit() {
     $new_ws_id = $wpdb->insert_id;
     $workspace_map[$ws['id']] = $new_ws_id;
 
-    // Assign the Admin as Owner
     $wpdb->insert($wpdb->prefix . 'fn_workspace_members', [
         'workspace_id' => $new_ws_id, 
         'user_id'      => $owner_id, 
         'app_role'     => 'owner'
     ]);
 
-    // Set this newly imported workspace as the official global Starter Kit!
     update_option('fn_starter_workspace_id', $new_ws_id);
 
-    // 5. Import Templates linked to this workspace
     if (!empty($data['templates'])) {
         foreach ($data['templates'] as $t) {
             if ($t['workspace_id'] == $ws['id'] || $t['workspace_id'] == 0) {
@@ -1072,7 +1013,6 @@ function fn_install_bundled_starter_kit() {
         }
     }
 
-    // 6. Import Notes & Folders
     if (!empty($data['notes'])) {
         foreach ($data['notes'] as $n) {
             if ($n['workspace_id'] == $ws['id']) {
@@ -1081,7 +1021,7 @@ function fn_install_bundled_starter_kit() {
                     'post_content' => wp_slash($n['content']), 
                     'post_type'    => 'fn_note_page', 
                     'post_status'  => 'publish', 
-                    'post_parent'  => 0 // Temporarily 0, mapped below
+                    'post_parent'  => 0 
                 ]);
                 $note_map[$n['old_id']] = $new_note_id;
                 update_post_meta($new_note_id, '_fn_workspace_id', $new_ws_id);
@@ -1093,7 +1033,6 @@ function fn_install_bundled_starter_kit() {
         }
     }
 
-    // 7. Re-link Parent/Child Folders & Notes Hierarchy
     foreach ($notes_to_relink as $new_child_id => $old_parent_id) {
         if (isset($note_map[$old_parent_id])) {
             wp_update_post(['ID' => $new_child_id, 'post_parent' => $note_map[$old_parent_id]]);
@@ -1104,73 +1043,54 @@ function fn_create_custom_tables() {
     global $wpdb;
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
     
-    // ADDED: Get the site's default charset and collation
     $charset_collate = $wpdb->get_charset_collate();
 
-    // ADDED: Append $charset_collate to the end of the SQL statements
     dbDelta("CREATE TABLE {$wpdb->prefix}fn_workspaces (id bigint(20) NOT NULL AUTO_INCREMENT, workspace_name varchar(255) NOT NULL, theme_color varchar(7) NOT NULL, join_code varchar(12) NOT NULL, created_by bigint(20) NOT NULL, PRIMARY KEY (id)) $charset_collate;");
     dbDelta("CREATE TABLE {$wpdb->prefix}fn_workspace_members (id bigint(20) NOT NULL AUTO_INCREMENT, workspace_id bigint(20) NOT NULL, user_id bigint(20) NOT NULL, app_role varchar(50) NOT NULL, PRIMARY KEY (id)) $charset_collate;");
 }
-// ==========================================
-// GLOBAL BACKUP & RESTORE
-// ==========================================
 
 add_action('admin_post_fn_export_app_data', 'fn_export_app_data');
 function fn_export_app_data() {
     if (!current_user_can('manage_options')) wp_die(__('Unauthorized', 'family-notebook'));
-    check_admin_referer('fn_export_nonce'); // Security check for our new form
+    check_admin_referer('fn_export_nonce'); 
 
     global $wpdb;
 
-    // 1. Get the selected workspaces from the form
     $selected_ws = isset($_POST['fn_export_workspaces']) ? array_map('intval', $_POST['fn_export_workspaces']) : [];
     
-    if (empty($selected_ws)) {
-        wp_die(__('Please select at least one workspace to export.', 'family-notebook'));
-    }
+    if (empty($selected_ws)) wp_die(__('Please select at least one workspace to export.', 'family-notebook'));
 
-    // Prepare placeholders for the SQL query based on how many workspaces were checked
     $ws_placeholders = implode(',', array_fill(0, count($selected_ws), '%d'));
 
     $data = [
         'version' => '1.0.0',
         'export_date' => current_time('mysql'),
-        // Filter Workspaces
         'workspaces' => $wpdb->get_results($wpdb->prepare("SELECT id, workspace_name, theme_color, join_code FROM {$wpdb->prefix}fn_workspaces WHERE id IN ($ws_placeholders)", ...$selected_ws), ARRAY_A),
-        // Filter Members based on the chosen workspaces
         'members' => $wpdb->get_results($wpdb->prepare("SELECT m.workspace_id, m.app_role, u.user_email FROM {$wpdb->prefix}fn_workspace_members m INNER JOIN {$wpdb->users} u ON m.user_id = u.ID WHERE m.workspace_id IN ($ws_placeholders)", ...$selected_ws), ARRAY_A),
         'notes' => [],
         'templates' => []
     ];
 
-    // 2. Filter Notes (Only grab notes assigned to the selected workspaces)
     $notes = get_posts([
         'post_type' => 'fn_note_page', 
         'posts_per_page' => -1, 
         'post_status' => 'any',
-        'meta_query' => [
-            [
-                'key' => '_fn_workspace_id',
-                'value' => $selected_ws,
-                'compare' => 'IN'
-            ]
-        ]
+        'meta_query' => [['key' => '_fn_workspace_id', 'value' => $selected_ws, 'compare' => 'IN']]
     ]);
     
     foreach($notes as $n) {
         $data['notes'][] = ['old_id' => $n->ID, 'title' => $n->post_title, 'content' => $n->post_content, 'parent_id' => $n->post_parent, 'workspace_id' => get_post_meta($n->ID, '_fn_workspace_id', true)];
     }
 
-    // 3. Filter Templates (Grab Global templates AND specific Workspace templates)
     $templates = get_posts([
         'post_type' => 'fn_template', 
         'posts_per_page' => -1, 
         'post_status' => 'any',
         'meta_query' => [
             'relation' => 'OR',
-            [ 'key' => '_fn_workspace_id', 'value' => [0, ''], 'compare' => 'IN' ], // Global templates
-            [ 'key' => '_fn_workspace_id', 'compare' => 'NOT EXISTS' ],             // Legacy global templates
-            [ 'key' => '_fn_workspace_id', 'value' => $selected_ws, 'compare' => 'IN' ] // Selected workspace templates
+            [ 'key' => '_fn_workspace_id', 'value' => [0, ''], 'compare' => 'IN' ], 
+            [ 'key' => '_fn_workspace_id', 'compare' => 'NOT EXISTS' ],             
+            [ 'key' => '_fn_workspace_id', 'value' => $selected_ws, 'compare' => 'IN' ] 
         ]
     ]);
     
@@ -1178,7 +1098,6 @@ function fn_export_app_data() {
         $data['templates'][] = ['title' => $t->post_title, 'content' => $t->post_content, 'workspace_id' => get_post_meta($t->ID, '_fn_workspace_id', true)];
     }
 
-    // 4. Output the JSON File
     header('Content-Type: application/json');
     header('Content-Disposition: attachment; filename="family-notebook-backup-' . date('Y-m-d') . '.json"');
     echo wp_json_encode($data);
@@ -1200,7 +1119,6 @@ function fn_import_app_data() {
     $current_user_id = get_current_user_id();
     $workspace_map = []; $note_map = []; $notes_to_relink = [];
 
-    // Phase 1: Import Workspaces
     if (!empty($data['workspaces'])) {
         foreach ($data['workspaces'] as $ws) {
             $wpdb->insert($wpdb->prefix . 'fn_workspaces', [
@@ -1213,7 +1131,6 @@ function fn_import_app_data() {
         }
     }
 
-    // Phase 1.5: Relink Members by Email
     if (!empty($data['members'])) {
         foreach ($data['members'] as $mem) {
             if(!isset($workspace_map[$mem['workspace_id']])) continue;
@@ -1229,7 +1146,6 @@ function fn_import_app_data() {
         }
     }
 
-    // Fallback: Ensure every workspace has an owner (assign importing admin if original owner missing)
     foreach($workspace_map as $old_id => $new_id) {
         $has_owner = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}fn_workspace_members WHERE workspace_id = %d AND app_role = 'owner'", $new_id));
         if ($has_owner == 0) {
@@ -1237,7 +1153,6 @@ function fn_import_app_data() {
         }
     }
 
-    // Phase 2: Import Templates
     if (!empty($data['templates'])) {
         foreach ($data['templates'] as $t) {
             $new_template_id = wp_insert_post(['post_title' => sanitize_text_field($t['title']), 'post_content' => wp_slash($t['content']), 'post_type' => 'fn_template', 'post_status' => 'publish']);
@@ -1246,7 +1161,6 @@ function fn_import_app_data() {
         }
     }
 
-    // Phase 3 & 4: Import Notes & Hierarchies
     if (!empty($data['notes'])) {
         foreach ($data['notes'] as $n) {
             $new_note_id = wp_insert_post(['post_title' => sanitize_text_field($n['title']), 'post_content' => wp_slash($n['content']), 'post_type' => 'fn_note_page', 'post_status' => 'publish', 'post_parent' => 0]);
@@ -1263,11 +1177,7 @@ function fn_import_app_data() {
     wp_redirect(admin_url('admin.php?page=family-notebook&import=success')); exit;
 }
 
-// ==========================================
-// ADMIN UI: TEMPLATE SCOPE MANAGEMENT
-// ==========================================
 
-// 1. Add Meta Box to the Template Editor
 add_action('add_meta_boxes', 'fn_template_meta_box');
 function fn_template_meta_box() {
     add_meta_box('fn_template_workspace', __('Template Scope', 'family-notebook'), 'fn_template_meta_box_html', 'fn_template', 'side', 'default');
@@ -1276,7 +1186,7 @@ function fn_template_meta_box() {
 function fn_template_meta_box_html($post) {
     global $wpdb;
     $current_ws = get_post_meta($post->ID, '_fn_workspace_id', true);
-    if ($current_ws === '') $current_ws = 0; // Default to Global
+    if ($current_ws === '') $current_ws = 0; 
     
     $workspaces = $wpdb->get_results("SELECT id, workspace_name FROM {$wpdb->prefix}fn_workspaces ORDER BY workspace_name ASC");
 
@@ -1292,7 +1202,6 @@ function fn_template_meta_box_html($post) {
     wp_nonce_field('fn_save_template_scope', 'fn_template_scope_nonce');
 }
 
-// 2. Save the Meta Box Value
 add_action('save_post_fn_template', 'fn_save_template_meta');
 function fn_save_template_meta($post_id) {
     if (!isset($_POST['fn_template_scope_nonce']) || !wp_verify_nonce($_POST['fn_template_scope_nonce'], 'fn_save_template_scope')) return;
@@ -1304,7 +1213,6 @@ function fn_save_template_meta($post_id) {
     }
 }
 
-// 3. Add Custom Column to Template List Table for easy viewing
 add_filter('manage_fn_template_posts_columns', 'fn_template_columns');
 function fn_template_columns($columns) {
     $columns['workspace_scope'] = __('Workspace Scope', 'family-notebook');

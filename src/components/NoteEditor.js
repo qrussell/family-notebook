@@ -3,9 +3,67 @@ import { useState, useEffect } from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
 import { RichTextBlock, ChecklistBlock, ChoreChartBlock } from './Blocks';
 
+// --- DEEP MERGE HELPER FUNCTION ---
+function mergeArrayById(baseArray, localArray, serverArray) {
+    const mergedArray = [];
+    const conflicts = [];
+
+    const allIds = new Set([
+        ...(baseArray || []).map(item => item.id),
+        ...(localArray || []).map(item => item.id),
+        ...(serverArray || []).map(item => item.id)
+    ]);
+
+    allIds.forEach(id => {
+        const base = (baseArray || []).find(item => item.id === id);
+        const local = (localArray || []).find(item => item.id === id);
+        const server = (serverArray || []).find(item => item.id === id);
+
+        const strBase = JSON.stringify(base || null);
+        const strLocal = JSON.stringify(local || null);
+        const strServer = JSON.stringify(server || null);
+
+        // No changes, or both deleted cleanly
+        if (strLocal === strBase && strServer === strBase) {
+            if (base) mergedArray.push(base);
+            return;
+        }
+
+        // Only Local (User 1) changed/added/deleted
+        if (strServer === strBase && strLocal !== strBase) {
+            if (local) mergedArray.push(local);
+            return;
+        }
+
+        // Only Server (User 2) changed/added/deleted
+        if (strLocal === strBase && strServer !== strBase) {
+            if (server) mergedArray.push(server);
+            return;
+        }
+
+        // Both changed it to the exact same thing
+        if (strLocal === strServer) {
+            if (local) mergedArray.push(local);
+            return;
+        }
+
+        // HARD CONFLICT on this specific item
+        conflicts.push({ id, localItem: local, serverItem: server, baseItem: base });
+    });
+
+    return { mergedArray: mergedArray.filter(Boolean), conflicts };
+}
+
 const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, onNoteCreated, onNoteUpdated, onTemplateSaved }) => {
     const [title, setTitle] = useState('');
     const [tabs, setTabs] = useState([]);
+    
+    // NEW STATES FOR VERSION CONTROL
+    const [baseTabs, setBaseTabs] = useState([]);
+    const [lastModified, setLastModified] = useState(null);
+    const [isMergeMode, setIsMergeMode] = useState(false);
+    const [serverTabsState, setServerTabsState] = useState(null);
+
     const [activeTabId, setActiveTabId] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
@@ -28,7 +86,10 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                 }
                 
                 setTabs(initialTabs);
+                setBaseTabs(initialTabs); // Save pristine state for merging
+                setLastModified(data.last_modified); // Save database timestamp
                 setActiveTabId(initialTabs[0].id);
+
                 if (!data.content || (Array.isArray(data.content) && data.content.length === 0) || (data.content.tabs && data.content.tabs.length === 0)) {
                     setIsEditMode(true);
                 }
@@ -39,7 +100,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
 
     // --- SMART POLLING SYNC ---
     useEffect(() => {
-        if (isEditMode) return;
+        if (isEditMode || isMergeMode) return;
 
         const fetchUpdates = () => {
             if (document.visibilityState !== 'visible') return;
@@ -48,6 +109,8 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                 .then((data) => {
                     if (data.content && data.content.tabs && JSON.stringify(data.content.tabs) !== JSON.stringify(tabs)) {
                         setTabs(data.content.tabs);
+                        setBaseTabs(data.content.tabs); // Update pristine state
+                        setLastModified(data.last_modified); // Keep up to date
                     }
                 })
                 .catch(err => console.error("Sync failed:", err));
@@ -60,30 +123,125 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
             clearInterval(syncInterval);
             document.removeEventListener("visibilitychange", fetchUpdates);
         };
-    }, [noteId, isEditMode, tabs]);
+    }, [noteId, isEditMode, isMergeMode, tabs]);
 
     const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
     const activeBlocks = activeTab ? (activeTab.blocks || []) : [];
+
+    // --- CONFLICT RESOLUTION BRAIN ---
+    const handleConflictResponse = (errData) => {
+        const serverTabs = errData.server_blocks?.tabs || [];
+        const dbModified = errData.db_modified;
+
+        const tabMergeResult = mergeArrayById(baseTabs, tabs, serverTabs);
+        const finalMergedTabs = [];
+        const finalConflicts = [];
+
+        // Push easily merged tabs
+        tabMergeResult.mergedArray.forEach(t => finalMergedTabs.push(t));
+
+        // Dig into tab conflicts to see if we can deep merge the blocks inside them
+        tabMergeResult.conflicts.forEach(tabConflict => {
+            const { localItem: localTab, serverItem: serverTab, baseItem: baseTab } = tabConflict;
+
+            if (localTab && serverTab && localTab.blocks && serverTab.blocks) {
+                const blockMergeResult = mergeArrayById(baseTab?.blocks || [], localTab.blocks, serverTab.blocks);
+                const finalMergedBlocks = [...blockMergeResult.mergedArray];
+
+                // Dig into block conflicts to see if we can deep merge the lists/items inside them
+                blockMergeResult.conflicts.forEach(blockConflict => {
+                    const { localItem: localBlock, serverItem: serverBlock, baseItem: baseBlock } = blockConflict;
+
+                    if (localBlock?.type === 'checklist' && serverBlock?.type === 'checklist') {
+                        const itemMergeResult = mergeArrayById(baseBlock?.items || [], localBlock.items || [], serverBlock.items || []);
+                        if (itemMergeResult.conflicts.length === 0) {
+                            finalMergedBlocks.push({ ...serverBlock, items: itemMergeResult.mergedArray });
+                            return; // Conflict resolved!
+                        }
+                    }
+
+                    if (localBlock?.type === 'chore-chart' && serverBlock?.type === 'chore-chart') {
+                        const rowMergeResult = mergeArrayById(baseBlock?.rows || [], localBlock.rows || [], serverBlock.rows || []);
+                        if (rowMergeResult.conflicts.length === 0) {
+                            finalMergedBlocks.push({ ...serverBlock, rows: rowMergeResult.mergedArray });
+                            return; // Conflict resolved!
+                        }
+                    }
+                    
+                    finalConflicts.push({ type: 'block', conflict: blockConflict });
+                });
+
+                if (finalConflicts.length === 0) {
+                    finalMergedTabs.push({ ...serverTab, blocks: finalMergedBlocks });
+                    return; // Tab Conflict resolved!
+                }
+            }
+
+            finalConflicts.push({ type: 'tab', conflict: tabConflict });
+        });
+
+        if (finalConflicts.length === 0) {
+            // SUCCESS! No hard conflicts. Auto-Save the magically merged result!
+            alert(__('Changes from another user were automatically merged safely!', 'family-notebook'));
+            setTabs(finalMergedTabs);
+            setBaseTabs(finalMergedTabs);
+            
+            // Force save the new merged data to the server to solidify it
+            apiFetch({
+                path: `/family-notebook/v1/notes/${noteId}`,
+                method: 'PUT',
+                data: { title: title, content: { tabs: finalMergedTabs } } // null last_modified = overwrite
+            }).then(res => setLastModified(res.last_modified)).catch(console.error);
+        } else {
+            // HARD CONFLICT DETECTED - Show UI
+            setServerTabsState(serverTabs);
+            setIsMergeMode(true);
+        }
+    };
 
     const silentAutoSave = (currentTabs) => {
         apiFetch({
             path: `/family-notebook/v1/notes/${noteId}`,
             method: 'PUT',
-            data: { title: title, content: { tabs: currentTabs } }
-        }).catch(err => console.error("Auto-save failed", err));
+            data: { title: title, content: { tabs: currentTabs }, last_modified: lastModified }
+        })
+        .then(res => {
+            setLastModified(res.last_modified);
+            setBaseTabs(currentTabs);
+        })
+        .catch(err => {
+            if (err.code === 'conflict' || err.status === 409) {
+                setIsEditMode(true);
+                handleConflictResponse(err.data);
+            }
+        });
     };
 
-    const handleSave = () => {
+    const handleSave = (forceOverwrite = false) => {
         setIsSaving(true);
         apiFetch({
             path: `/family-notebook/v1/notes/${noteId}`,
             method: 'PUT',
-            data: { title: title, content: { tabs: tabs } } 
-        }).then(() => {
+            data: { 
+                title: title, 
+                content: { tabs: tabs },
+                last_modified: forceOverwrite ? null : lastModified 
+            } 
+        }).then((response) => {
             setIsSaving(false);
             setIsEditMode(false); 
+            setLastModified(response.last_modified);
+            setBaseTabs(tabs);
             if (onNoteUpdated) onNoteUpdated(noteId, title); 
-        }).catch(console.error);
+        }).catch(err => {
+            setIsSaving(false);
+            if (err.code === 'conflict' || err.status === 409) {
+                handleConflictResponse(err.data);
+            } else {
+                console.error(err);
+                alert(__('An error occurred while saving.', 'family-notebook'));
+            }
+        });
     };
     
     const handleSaveToLibrary = () => {
@@ -239,6 +397,51 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
 
     if (isLoading) return <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>{__('Loading note...', 'family-notebook')}</div>;
 
+    // --- HARD CONFLICT UI ---
+    if (isMergeMode) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '20px', backgroundColor: '#fff1f2', borderRadius: '8px' }}>
+                <h2 style={{ color: '#e11d48', marginTop: 0 }}>{__('⚠️ Edit Conflict Detected!', 'family-notebook')}</h2>
+                <p style={{ color: '#881337', marginBottom: '20px' }}>
+                    {__('Someone else made complex changes to this note while you were editing, and the app could not automatically combine them safely. Please review the server version below.', 'family-notebook')}
+                </p>
+
+                <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }}>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'white', border: '1px solid #fecdd3', borderRadius: '8px', overflow: 'hidden' }}>
+                        <div style={{ backgroundColor: '#ffe4e6', padding: '10px 15px', fontWeight: 'bold', color: '#be123c', borderBottom: '1px solid #fecdd3' }}>
+                            {__('Currently on Server (Other User)', 'family-notebook')}
+                        </div>
+                        <div style={{ padding: '15px', overflowY: 'auto', flex: 1, fontSize: '12px', color: '#475569' }}>
+                            <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{JSON.stringify(serverTabsState, null, 2)}</pre>
+                        </div>
+                    </div>
+
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'white', border: `1px solid ${workspaceColor}`, borderRadius: '8px', overflow: 'hidden' }}>
+                        <div style={{ backgroundColor: `${workspaceColor}20`, padding: '10px 15px', fontWeight: 'bold', color: workspaceColor, borderBottom: `1px solid ${workspaceColor}` }}>
+                            {__('Your Version', 'family-notebook')}
+                        </div>
+                        <div style={{ padding: '15px', overflowY: 'auto', flex: 1, fontSize: '12px', color: '#475569' }}>
+                            <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{JSON.stringify(tabs, null, 2)}</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div style={{ marginTop: '20px', display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                    <button onClick={() => window.location.reload()} style={{ padding: '10px 20px', background: 'white', border: '1px solid #cbd5e1', color: '#475569', cursor: 'pointer', borderRadius: '4px', fontWeight: 'bold' }}>
+                        {__('Discard My Changes & Reload', 'family-notebook')}
+                    </button>
+                    <button onClick={() => { setIsMergeMode(false); handleSave(true); }} style={{ padding: '10px 20px', background: '#e11d48', color: 'white', border: 'none', cursor: 'pointer', borderRadius: '4px', fontWeight: 'bold' }}>
+                        {__('Force Save (Overwrite Server)', 'family-notebook')}
+                    </button>
+                    <button onClick={() => setIsMergeMode(false)} style={{ padding: '10px 20px', background: 'white', border: '1px solid #cbd5e1', color: '#475569', cursor: 'pointer', borderRadius: '4px' }}>
+                        {__('Cancel (Keep Editing)', 'family-notebook')}
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // --- STANDARD EDITOR UI ---
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             
@@ -290,7 +493,7 @@ const NoteEditor = ({ noteId, workspaceId, folderId, workspaceColor, onClose, on
                     ) : (
                         <div style={{ display: 'flex', gap: '10px' }}>
                             <button onClick={handleSaveToLibrary} style={{ backgroundColor: 'white', color: workspaceColor, border: `1px solid ${workspaceColor}`, padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>💾 {__('Save to Library', 'family-notebook')}</button>
-                            <button onClick={handleSave} disabled={isSaving} style={{ backgroundColor: workspaceColor, color: 'white', border: 'none', padding: '8px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{isSaving ? __('Saving...', 'family-notebook') : __('Save Changes', 'family-notebook')}</button>
+                            <button onClick={() => handleSave(false)} disabled={isSaving} style={{ backgroundColor: workspaceColor, color: 'white', border: 'none', padding: '8px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>{isSaving ? __('Saving...', 'family-notebook') : __('Save Changes', 'family-notebook')}</button>
                         </div>
                     )}
                 </div>
