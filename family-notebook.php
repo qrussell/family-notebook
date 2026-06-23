@@ -3,6 +3,8 @@
  * Plugin Name: Family Notebook
  * Description: A decoupled React SPA for family note-taking and organization.
  * Version: 1.1.3
+ * Requires at least: 6.0
+ * Requires PHP: 7.4
  * Author: Cielocloud.org
  * Text Domain: family-notebook
  * Domain Path: /languages
