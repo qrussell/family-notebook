@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Family Notebook
  * Description: A decoupled React SPA for family note-taking and organization.
- * Version: 1.1.2
+ * Version: 1.1.3
  * Author: Cielocloud.org
  * Text Domain: family-notebook
  * Domain Path: /languages
@@ -853,6 +853,114 @@ function fn_inject_pwa_meta_tags() {
     }
 }
 
+/**
+ * ==============================================================================
+ * GITHUB AUTOMATIC UPDATER
+ * ==============================================================================
+ */
+
+// Define your GitHub repository (Format: username/repository-name)
+define( 'FN_GITHUB_REPO', 'qrussell/family-notebook' );
+
+/**
+ * 1. Check GitHub for new releases
+ */
+add_filter( 'pre_set_site_transient_update_plugins', 'fn_check_for_github_updates' );
+function fn_check_for_github_updates( $transient ) {
+    if ( empty( $transient->checked ) ) {
+        return $transient;
+    }
+
+    $plugin_slug = plugin_basename( __FILE__ );
+    $current_version = $transient->checked[$plugin_slug];
+
+    // Query the GitHub API for the latest release
+    $github_api_url = 'https://api.github.com/repos/' . FN_GITHUB_REPO . '/releases/latest';
+    $response = wp_remote_get( $github_api_url, array(
+        'headers' => array(
+            'Accept' => 'application/vnd.github.v3+json',
+            'User-Agent' => 'WordPress/' . get_bloginfo( 'version' ) . '; ' . home_url()
+        )
+    ) );
+
+    if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+        return $transient;
+    }
+
+    $release_data = json_decode( wp_remote_retrieve_body( $response ) );
+
+    if ( ! empty( $release_data ) ) {
+        // Remove the 'v' from the tag name if present (e.g., 'v1.1.2' becomes '1.1.2')
+        $latest_version = ltrim( $release_data->tag_name, 'v' );
+
+        // If the GitHub version is higher than our current installed version...
+        if ( version_compare( $current_version, $latest_version, '<' ) ) {
+            $plugin_info = new stdClass();
+            $plugin_info->slug = current( explode( '/', $plugin_slug ) );
+            $plugin_info->plugin = $plugin_slug;
+            $plugin_info->new_version = $latest_version;
+            $plugin_info->url = $release_data->html_url;
+
+            // CRITICAL: Look for an attached .zip file in the release assets
+            if ( ! empty( $release_data->assets ) && isset( $release_data->assets[0]->browser_download_url ) ) {
+                $plugin_info->package = $release_data->assets[0]->browser_download_url;
+            } else {
+                // Fallback to the raw source code zip (Not recommended if you use React/build folders)
+                $plugin_info->package = $release_data->zipball_url;
+            }
+
+            $transient->response[$plugin_slug] = $plugin_info;
+        }
+    }
+
+    return $transient;
+}
+
+/**
+ * 2. Populate the "View version details" modal with GitHub Release Notes
+ */
+add_filter( 'plugins_api', 'fn_github_plugin_info', 20, 3 );
+function fn_github_plugin_info( $res, $action, $args ) {
+    if ( 'plugin_information' !== $action ) {
+        return false;
+    }
+
+    $plugin_slug = current( explode( '/', plugin_basename( __FILE__ ) ) );
+
+    if ( $plugin_slug !== $args->slug ) {
+        return $res;
+    }
+
+    $github_api_url = 'https://api.github.com/repos/' . FN_GITHUB_REPO . '/releases/latest';
+    $response = wp_remote_get( $github_api_url, array(
+        'headers' => array(
+            'Accept' => 'application/vnd.github.v3+json',
+            'User-Agent' => 'WordPress/' . get_bloginfo( 'version' ) . '; ' . home_url()
+        )
+    ) );
+
+    if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+        return $res;
+    }
+
+    $release_data = json_decode( wp_remote_retrieve_body( $response ) );
+
+    $res = new stdClass();
+    $res->name = 'Family Notebook';
+    $res->slug = $plugin_slug;
+    $res->version = ltrim( $release_data->tag_name, 'v' );
+    $res->author = 'qrussell';
+    $res->homepage = $release_data->html_url;
+    
+    // Use the markdown text from your GitHub Release as the changelog!
+    $res->sections = array(
+        'description' => 'The private, centralized notebook for your family.',
+        'changelog' => '<h3>Release Notes (' . $res->version . ')</h3><p>' . nl2br( esc_html( $release_data->body ) ) . '</p>'
+    );
+
+    return $res;
+}
+
 add_shortcode( 'family_notebook_app', 'fn_render_app_shortcode' );
 function fn_render_app_shortcode() {
     
@@ -1089,7 +1197,7 @@ function fn_export_app_data() {
         'meta_query' => [
             'relation' => 'OR',
             [ 'key' => '_fn_workspace_id', 'value' => [0, ''], 'compare' => 'IN' ], 
-            [ 'key' => '_fn_workspace_id', 'compare' => 'NOT EXISTS' ],             
+            [ 'key' => '_fn_workspace_id', 'compare' => 'NOT EXISTS' ],              
             [ 'key' => '_fn_workspace_id', 'value' => $selected_ws, 'compare' => 'IN' ] 
         ]
     ]);
